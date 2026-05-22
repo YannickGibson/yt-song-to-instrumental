@@ -1,0 +1,67 @@
+# Label configuration — copy to label.yml and fill in your values.
+# label.yml is gitignored (contains label-specific info).
+
+channel:
+  name: "Your Label Instrumentals"
+  url: "https://www.youtube.com/channel/YOUR_CHANNEL_ID"
+  description: |
+    Official instrumental versions of tracks by Your Label.
+    Extracted using AI source separation.
+
+label:
+  name: "Your Label"
+
+templates:
+  # Supported tags:
+  #   <artist-name>          — primary artist (channel owner)
+  #   <track-title>          — raw track title from yt-dlp/YTMusic
+  #   <video-title>          — final rendered YouTube upload title (recommended for descriptions)
+  #   <album-name>           — album name
+  #   <original-url>         — URL of the original YouTube video
+  #   <original-channel-url> — URL of the original YouTube channel
+  #   <model-name>           — separation model used (e.g. HTDemucs)
+  #   <label-name>           — label name from label.name above
+  #   <artist-tag>           — artist name sanitized for hashtag use
+  #   <channel-url>          — URL of the instrumentals YouTube channel
+
+  video_title: "<artist-name> — <track-title> (Instrumental)"
+
+  video_description: |
+    <video-title>
+
+    Separated using <model-name>.
+    Original video: <original-url>
+    Original channel: <original-channel-url>
+
+    This is an official instrumental provided by <label-name>.
+    Channel: <channel-url>
+    All rights reserved.
+
+    <artist-tag> #instrumental
+
+  album_playlist_name: "<artist-name> — <album-name> (Instrumentals)"
+  artist_playlist_name: "<artist-name> (Instrumentals)"
+
+# When true: create a playlist for every contributor — both co-billed primaries
+# ("A & B", "A, B") and featured guests ("(feat. X)" in titles). When false: use
+# the raw primary artist string as a single playlist name. From a label's
+# perspective, even an equal-billing collab with an outside artist shouldn't
+# auto-promote them — so the public default is false.
+create_playlists_for_collaborators: false
+
+# Source channels to scan. Each entry: a YouTube or YouTube Music channel URL
+# and an after_date (YYYYMMDD) — only videos newer than this are processed.
+sources:
+  - url: "https://music.youtube.com/@artist1"  # also works: https://youtube.com/@artist1
+    after_date: "20260101"
+  - url: "https://youtube.com/@artist2"
+    after_date: "20260315"
+
+# Artist alias groups — names that refer to the same artist.
+# The first name in each group is the canonical name used for playlists.
+# Any variation encountered (in metadata, titles, etc.) resolves to it.
+# Example:
+#   artist_aliases:
+#     - ["Artist Full Name", "Artist Abbrev", "ArtistAltSpelling"]
+#     - ["Band Name", "Band Abbreviation"]
+artist_aliases: []

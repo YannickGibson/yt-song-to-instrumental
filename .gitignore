@@ -1,0 +1,15 @@
+.env
+.venv/
+label.yml
+data/
+output/
+tmp/
+token.json
+client_secrets.json
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+CLAUDE.md

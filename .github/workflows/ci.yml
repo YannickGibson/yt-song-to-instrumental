@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The demucs extra is required because tests/test_separator.py imports the
+      # backend modules directly, and demucs_backend.py imports torch at module
+      # scope. Tests never run the model — only this import must resolve.
+      - name: Install dependencies
+        run: uv sync --extra dev --extra demucs
+
+      - name: Run tests
+        run: uv run pytest

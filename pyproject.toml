@@ -1,0 +1,61 @@
+[project]
+name = "yt-song-to-instrumental"
+version = "0.1.0"
+description = "Download songs, extract instrumentals via ML source separation, and auto-upload to YouTube"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+authors = [{ name = "Yannick Gibson", email = "gibson.yannick@gmail.com" }]
+keywords = ["youtube", "instrumental", "audio", "source-separation", "demucs", "music"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Conversion",
+]
+dependencies = [
+    "google-api-python-client",
+    "google-auth",
+    "google-auth-oauthlib",
+    "google-auth-httplib2",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv",
+    "yt-dlp",
+    "ytmusicapi",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+# torch/torchaudio capped <2.4: newer PyTorch aarch64 wheels use KleidiAI
+# kernels that require ARMv8.2 dotprod/fp16, which Cortex-A72 (Pi 4) lacks —
+# we'd hit SIGILL on apply_model. 2.3.x is the last safe baseline for this CPU,
+# which is also why requires-python is capped at <3.13 (torch 2.3 only has
+# cp312 wheels).
+demucs = ["demucs", "torch>=2.0,<2.4", "torchaudio>=2.0,<2.4", "soundfile"]
+mdxnet = ["onnxruntime"]
+mdxnet-gpu = ["onnxruntime-gpu"]
+all-models = ["demucs", "torch>=2.0,<2.4", "torchaudio>=2.0,<2.4", "onnxruntime"]
+dev = ["pytest", "pytest-mock"]
+
+[project.scripts]
+yt-instrumental = "yt_song_to_instrumental.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/YannickGibson/yt-song-to-instrumental"
+Repository = "https://github.com/YannickGibson/yt-song-to-instrumental"
+Issues = "https://github.com/YannickGibson/yt-song-to-instrumental/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["yt_song_to_instrumental"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: marks tests that require network/GPU (deselect with '-m \"not integration\"')"]
+addopts = "-m 'not integration'"
