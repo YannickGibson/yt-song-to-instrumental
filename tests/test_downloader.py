@@ -99,6 +99,36 @@ class TestEnumerateVideos:
             result = enumerate_videos("https://yt.com/@x")
         assert result == []
 
+    def test_tabbed_channel_picks_releases_tab(self):
+        tabbed = {
+            "_type": "playlist",
+            "entries": [
+                {"_type": "playlist", "title": "X - Videos", "webpage_url": "https://yt.com/@x/videos", "url": "https://yt.com/@x/videos"},
+                {"_type": "playlist", "title": "X - Releases", "webpage_url": "https://yt.com/@x/releases", "url": "https://yt.com/@x/releases"},
+            ],
+        }
+        releases_playlist_list = {
+            "_type": "playlist",
+            "entries": [
+                {
+                    "_type": "playlist",
+                    "title": "Album 1",
+                    "url": "https://yt.com/playlist?list=ALB1",
+                    "webpage_url": "https://yt.com/playlist?list=ALB1",
+                }
+            ],
+        }
+        album_contents = {
+            "_type": "playlist",
+            "entries": [
+                {"id": "r1", "title": "Release Track 1", "webpage_url": "https://yt.com/watch?v=r1"},
+            ],
+        }
+        instances = self._ydl_returning(tabbed, releases_playlist_list, album_contents)
+        with patch("yt_song_to_instrumental.downloader.yt_dlp.YoutubeDL", side_effect=instances):
+            result = enumerate_videos("https://yt.com/@x", tab="releases")
+        assert [e["id"] for e in result] == ["r1"]
+
     def test_after_date_filters_entries_with_upload_date(self):
         entries = [
             {"id": "old", "title": "Old", "upload_date": "20250101"},
@@ -128,8 +158,8 @@ class TestEnumerateVideos:
 class TestDedupeEntriesPreferAudio:
     def test_audio_wins_over_music_video(self):
         entries = [
-            {"id": "v1", "title": "Lord Of Chaos (Official Music Video)"},
-            {"id": "a1", "title": "Lord Of Chaos (Audio)"},
+            {"id": "v1", "title": "Static Crown (Official Music Video)"},
+            {"id": "a1", "title": "Static Crown (Audio)"},
         ]
         result = dedupe_entries_prefer_audio(entries)
         assert len(result) == 1
@@ -137,8 +167,8 @@ class TestDedupeEntriesPreferAudio:
 
     def test_audio_wins_regardless_of_order(self):
         entries = [
-            {"id": "a1", "title": "Lord Of Chaos (Audio)"},
-            {"id": "v1", "title": "Lord Of Chaos (Official Music Video)"},
+            {"id": "a1", "title": "Static Crown (Audio)"},
+            {"id": "v1", "title": "Static Crown (Official Music Video)"},
         ]
         result = dedupe_entries_prefer_audio(entries)
         assert len(result) == 1
@@ -146,8 +176,8 @@ class TestDedupeEntriesPreferAudio:
 
     def test_unique_titles_pass_through(self):
         entries = [
-            {"id": "1", "title": "Margiela"},
-            {"id": "2", "title": "Catastrophe"},
+            {"id": "1", "title": "Velvetine"},
+            {"id": "2", "title": "Downfall"},
         ]
         result = dedupe_entries_prefer_audio(entries)
         assert [e["id"] for e in result] == ["1", "2"]
@@ -164,8 +194,8 @@ class TestDedupeEntriesPreferAudio:
         assert [e["id"] for e in result] == ["1", "2"]
 
     def test_no_marker_versions_kept_as_is(self):
-        # Two entries with no audio/video marker — both have priority 1, so the
-        # first one wins.
+        # Two entries with no audio/video marker — both priority 1, tie broken
+        # by smaller video_id ("1" < "2").
         entries = [
             {"id": "1", "title": "Track"},
             {"id": "2", "title": "Track"},
@@ -173,6 +203,20 @@ class TestDedupeEntriesPreferAudio:
         result = dedupe_entries_prefer_audio(entries)
         assert len(result) == 1
         assert result[0]["id"] == "1"
+
+    def test_priority_tie_broken_by_video_id_regardless_of_order(self):
+        # Two same-title, no-marker uploads — the pick must be deterministic
+        # (smaller video_id) even when enumeration order flips between runs.
+        forward = dedupe_entries_prefer_audio([
+            {"id": "zzz", "title": "Same Song"},
+            {"id": "aaa", "title": "Same Song"},
+        ])
+        reverse = dedupe_entries_prefer_audio([
+            {"id": "aaa", "title": "Same Song"},
+            {"id": "zzz", "title": "Same Song"},
+        ])
+        assert forward[0]["id"] == "aaa"
+        assert reverse[0]["id"] == "aaa"
 
     def test_entries_without_title_keyed_by_id(self):
         entries = [

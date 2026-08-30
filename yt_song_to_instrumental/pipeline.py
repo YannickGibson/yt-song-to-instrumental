@@ -1,22 +1,31 @@
 import logging
+import subprocess
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from yt_song_to_instrumental.cleanup import cleanup_track_artifacts
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
-from yt_song_to_instrumental.constants import MODEL_DISPLAY_NAMES
-from yt_song_to_instrumental.downloader import DownloadedTrack, download_tracks
+from yt_song_to_instrumental.constants import (
+    MODEL_DISPLAY_NAMES,
+    SHORT_DURATION_SECONDS,
+)
+from yt_song_to_instrumental.downloader import DownloadedTrack, download_source_video, download_tracks
 from yt_song_to_instrumental.history import DownloadRecord, HistoryDB
-from yt_song_to_instrumental.metadata import render_description, render_video_title
+from yt_song_to_instrumental.metadata import render_description, render_short_title, render_video_title, strip_topic_suffix
 from yt_song_to_instrumental.playlists import assign_to_playlists, split_artists
 from yt_song_to_instrumental.quality import check_quality
 from yt_song_to_instrumental.separator import get_separator
 from yt_song_to_instrumental.separator.base import SeparatorBackend
 from yt_song_to_instrumental.thumbnail import get_thumbnail_for_track
 from yt_song_to_instrumental.uploader import upload_video
-from yt_song_to_instrumental.video_render import render_video
+from yt_song_to_instrumental.video_detector import detect_if_music_video
+from yt_song_to_instrumental.video_render import render_short_video, render_video
+from yt_song_to_instrumental.trimmer import detect_silence_threshold, trim_audio_file
 
 logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -53,6 +62,12 @@ class _RunContext:
     tmp_dir: Path
     output_dir: Path
     upload_max_wait_seconds: float | None
+    cleanup_after_upload: bool
+    trim_silence: bool
+    trim_silence_threshold_db: float
+    preserve_original_video_title: bool
+    trim_start_times: dict[str, float] = field(default_factory=dict)
+    shorts_only: bool = False
 
 
 def process_url(
@@ -69,6 +84,12 @@ def process_url(
     after_date: str | None = None,
     history: HistoryDB | None = None,
     upload_max_wait_seconds: float | None = None,
+    cleanup_after_upload: bool = True,
+    trim_silence: bool = False,
+    preserve_original_video_title: bool = False,
+    is_uploader: bool = False,
+    tab: str = "videos",
+    shorts_only: bool = False,
 ) -> PipelineReport:
     report = PipelineReport()
     model = model_name or config.separator_model
@@ -87,15 +108,29 @@ def process_url(
         tmp_dir=Path(config.tmp_dir),
         output_dir=Path(config.output_dir),
         upload_max_wait_seconds=upload_max_wait_seconds,
+        cleanup_after_upload=cleanup_after_upload,
+        trim_silence=trim_silence,
+        trim_silence_threshold_db=label_config.trim_silence_threshold_db,
+        preserve_original_video_title=preserve_original_video_title or is_uploader,
+        shorts_only=shorts_only,
     )
+
+    target_ids: set[str] | None = None
+    if _is_single_video_url(url):
+        target_ids = _extract_target_video_ids(url)
 
     if not skip_download:
         logger.info("Downloading tracks from %s", url)
-        downloaded = download_tracks(url, history, ctx.tmp_dir, after_date=after_date)
+        downloaded = download_tracks(url, history, ctx.tmp_dir, after_date=after_date, tab=tab)
         report.downloaded = len(downloaded)
         logger.info("Downloaded %d new tracks", report.downloaded)
+        if target_ids is None and _is_single_video_url(url) and downloaded:
+            target_ids = {t.video_id for t in downloaded}
 
-    for track in _select_tracks(history, model, skip_upload):
+    shorts_enabled = label_config.upload_short or label_config.upload_short_if_music_video
+    for track in _select_tracks(
+        history, model, skip_upload, target_ids=target_ids, shorts_enabled=shorts_enabled, shorts_only=shorts_only
+    ):
         artist = artist_override or track.artist
         album = album_override or track.album
 
@@ -114,15 +149,61 @@ def process_url(
     return report
 
 
-def _select_tracks(history: HistoryDB, model: str, skip_upload: bool) -> list[DownloadRecord]:
+def _is_single_video_url(url: str) -> bool:
+    """Return True if `url` points to a single video rather than a channel or playlist."""
+    url_lower = url.lower()
+    return (
+        "watch?v=" in url_lower
+        or "youtu.be/" in url_lower
+        or "/shorts/" in url_lower
+        or "/embed/" in url_lower
+        or "/v/" in url_lower
+    )
+
+
+def _extract_target_video_ids(url: str) -> set[str] | None:
+    """Extract target video ID from a single-video URL if possible."""
+    parsed = urllib.parse.urlparse(url)
+    if "youtu.be" in parsed.netloc:
+        vid = parsed.path.lstrip("/")
+        if vid:
+            return {vid}
+    elif "youtube.com" in parsed.netloc or "music.youtube.com" in parsed.netloc:
+        qs = urllib.parse.parse_qs(parsed.query)
+        if "v" in qs and qs["v"]:
+            return {qs["v"][0]}
+        parts = parsed.path.split("/")
+        if len(parts) >= 3 and parts[1] in ("shorts", "embed", "v"):
+            return {parts[2]}
+    return None
+
+
+def _select_tracks(
+    history: HistoryDB,
+    model: str,
+    skip_upload: bool,
+    target_ids: set[str] | list[str] | None = None,
+    shorts_enabled: bool = False,
+    shorts_only: bool = False,
+) -> list[DownloadRecord]:
     """Tracks that still need work: not yet separated, or separated but not
-    uploaded (unless uploads are skipped)."""
+    uploaded (unless uploads are skipped). If target_ids is provided, restricts
+    selection to those video IDs."""
     tracks: list[DownloadRecord] = []
     seen_ids: set[str] = set()
+    target_set = set(target_ids) if target_ids is not None else None
     for dl in history.get_all_downloads():
+        if target_set is not None and dl.video_id not in target_set:
+            continue
         needs_separation = not history.is_separated(dl.video_id, model)
-        needs_upload = not skip_upload and not history.is_uploaded(dl.video_id, model)
-        if (needs_separation or needs_upload) and dl.video_id not in seen_ids:
+        needs_upload = not skip_upload and not shorts_only and not history.is_uploaded(dl.video_id, model)
+        needs_short = (
+            not skip_upload
+            and shorts_enabled
+            and not history.is_short_uploaded(dl.video_id, model)
+            and history.get_short_status(dl.video_id, model) not in ("skipped_not_music_video", "skipped_disabled")
+        )
+        if (needs_separation or needs_upload or needs_short) and dl.video_id not in seen_ids:
             tracks.append(dl)
             seen_ids.add(dl.video_id)
     return tracks
@@ -142,9 +223,46 @@ def _separate_track(
     try:
         audio_path = Path(track.audio_path)
         sep_result = ctx.separator.separate(audio_path, ctx.output_dir / ctx.model)
+
+        trim_start_t = 0.0
+        if ctx.trim_silence:
+            logger.info("Checking for silence/vocals-only sections at start/end...")
+            start_t, end_t, orig_dur = detect_silence_threshold(
+                sep_result.instrumental_path,
+                threshold_db=ctx.trim_silence_threshold_db,
+            )
+            if start_t > 0.0 or end_t < orig_dur:
+                logger.info(
+                    "Trimming silence from instrumental: start=%.2fs, end=%.2fs (original duration: %.2fs)",
+                    start_t,
+                    end_t,
+                    orig_dur,
+                )
+                trimmed_path = sep_result.instrumental_path.parent / "no_vocals_trimmed.wav"
+                trim_audio_file(sep_result.instrumental_path, trimmed_path, start_t, end_t)
+
+                # Replace the original instrumental file with the trimmed one
+                sep_result.instrumental_path.unlink()
+                trimmed_path.rename(sep_result.instrumental_path)
+
+                # Update the duration in sep_result
+                sep_result.duration_seconds = end_t - start_t
+                ctx.trim_start_times[track.video_id] = start_t
+                trim_start_t = start_t
+
+                # Also trim vocals if they exist to keep stems aligned
+                if sep_result.vocals_path and sep_result.vocals_path.exists():
+                    trimmed_vocals = sep_result.vocals_path.parent / "vocals_trimmed.wav"
+                    try:
+                        trim_audio_file(sep_result.vocals_path, trimmed_vocals, start_t, end_t)
+                        sep_result.vocals_path.unlink()
+                        trimmed_vocals.rename(sep_result.vocals_path)
+                    except Exception as ve:
+                        logger.warning("Failed to trim vocals track: %s", ve)
+
         qa = check_quality(sep_result.instrumental_path)
         ctx.history.record_separation(
-            track.video_id, ctx.model, str(sep_result.instrumental_path), qa.passed
+            track.video_id, ctx.model, str(sep_result.instrumental_path), qa.passed, trim_start_seconds=trim_start_t
         )
         report.separated += 1
 
@@ -166,6 +284,136 @@ def _separate_track(
     return True
 
 
+def _upload_short_track(
+    track: DownloadRecord,
+    artist: str,
+    album: str,
+    long_form_yt_id: str,
+    start_time: float,
+    ctx: _RunContext,
+    report: PipelineReport,
+) -> None:
+    if not ctx.label_config.upload_short and not ctx.label_config.upload_short_if_music_video:
+        return
+
+    if ctx.history.is_short_uploaded(track.video_id, ctx.model):
+        logger.info("Short already uploaded for: %s", track.title)
+        return
+
+    sep_record = ctx.history.get_separation_record(track.video_id, ctx.model)
+    if sep_record is None or not sep_record.quality_passed:
+        return
+    instrumental_path = Path(sep_record.instrumental_path)
+    if not instrumental_path.exists():
+        logger.warning("Instrumental track not found for Short: %s", instrumental_path)
+        return
+
+    logger.info("Processing YouTube Short for: %s", track.title)
+    source_video = download_source_video(track.video_id, ctx.tmp_dir)
+    if not source_video or not source_video.exists():
+        logger.warning("Source video could not be downloaded for Short: %s", track.title)
+        ctx.history.record_short_status(track.video_id, ctx.model, "source_video_download_failed")
+        return
+
+    if start_time == 0.0:
+        if sep_record and sep_record.trim_start_seconds > 0.0:
+            start_time = sep_record.trim_start_seconds
+        elif track.video_id in ctx.trim_start_times:
+            start_time = ctx.trim_start_times[track.video_id]
+
+    is_music_vid = None
+    if ctx.label_config.upload_short_if_music_video:
+        is_music_vid, motion_diff = detect_if_music_video(
+            source_video, start_time=start_time, duration=SHORT_DURATION_SECONDS
+        )
+        if not is_music_vid:
+            logger.info(
+                "Track %s detected as static / non-music-video (diff=%.2f); skipping Short",
+                track.title,
+                motion_diff,
+            )
+            ctx.history.record_short_status(
+                track.video_id, ctx.model, "skipped_not_music_video", is_music_video=False
+            )
+            return
+        else:
+            logger.info("Track %s detected as music video (diff=%.2f)", track.title, motion_diff)
+
+    short_video_path = ctx.output_dir / ctx.model / f"{track.video_id}_short.mp4"
+    try:
+        render_short_video(
+            source_video,
+            instrumental_path,
+            short_video_path,
+            start_time=start_time,
+            duration=SHORT_DURATION_SECONDS,
+        )
+    except Exception as e:
+        logger.error("Short video render failed for %s: %s", track.title, e)
+        ctx.history.record_short_status(
+            track.video_id, ctx.model, "render_failed", is_music_video=is_music_vid
+        )
+        return
+
+    primary_artist = ctx.label_config.artist_aliases.resolve(
+        strip_topic_suffix(track.channel_name or artist)
+    )
+    full_title = render_video_title(
+        ctx.label_config.video_title_template,
+        primary_artist=primary_artist,
+        raw_title=track.title,
+        all_artists=[strip_topic_suffix(a) for a in split_artists(artist)],
+        album_name=album,
+        model_name=ctx.display_name,
+        label_name=ctx.label_config.label_name,
+        aliases=ctx.label_config.artist_aliases,
+        preserve_original_video_title=ctx.preserve_original_video_title,
+    )
+    short_title = render_short_title(full_title)
+
+    full_video_url = (
+        f"https://www.youtube.com/watch?v={long_form_yt_id}"
+        if long_form_yt_id
+        else track.url
+    )
+    short_desc = render_description(
+        ctx.label_config.short_description_template,
+        artist_name=artist,
+        track_title=track.title,
+        album_name=album,
+        original_url=track.url,
+        original_channel_url=track.channel_url,
+        model_name=ctx.display_name,
+        label_name=ctx.label_config.label_name,
+        channel_url=ctx.label_config.channel_url,
+        video_title=short_title,
+        full_video_url=full_video_url,
+    )
+
+    try:
+        short_yt_id = upload_video(
+            ctx.service,
+            short_video_path,
+            short_title,
+            short_desc,
+            ctx.privacy,
+            max_total_wait_seconds=ctx.upload_max_wait_seconds,
+        )
+        ctx.history.record_short_upload(
+            track.video_id,
+            ctx.model,
+            short_yt_id,
+            is_music_video=is_music_vid,
+            status="uploaded",
+        )
+        logger.info("Successfully uploaded Short for %s (id: %s)", track.title, short_yt_id)
+    except Exception as e:
+        logger.error("Short upload failed for %s: %s", track.title, e)
+        ctx.history.record_short_status(
+            track.video_id, ctx.model, "upload_failed", is_music_video=is_music_vid
+        )
+
+
 def _upload_track(
     track: DownloadRecord,
     artist: str,
@@ -175,7 +423,47 @@ def _upload_track(
 ) -> None:
     """Render the instrumental video for `track` and upload it, then assign it
     to playlists. All outcomes are recorded on `report`."""
+    if ctx.shorts_only:
+        sep_record = ctx.history.get_separation_record(track.video_id, ctx.model)
+        if sep_record is None or not sep_record.quality_passed:
+            report.skipped += 1
+            return
+        upload_rec = ctx.history.get_upload_record(track.video_id, ctx.model)
+        long_form_yt_id = upload_rec.youtube_upload_id if upload_rec else ""
+        if ctx.label_config.upload_short or ctx.label_config.upload_short_if_music_video:
+            if not ctx.history.is_short_uploaded(track.video_id, ctx.model) and ctx.history.get_short_status(track.video_id, ctx.model) not in ("skipped_not_music_video", "skipped_disabled"):
+                start_time = 0.0
+                if sep_record and sep_record.trim_start_seconds > 0.0:
+                    start_time = sep_record.trim_start_seconds
+                elif track.video_id in ctx.trim_start_times:
+                    start_time = ctx.trim_start_times[track.video_id]
+                _upload_short_track(track, artist, album, long_form_yt_id, start_time, ctx, report)
+
+        if ctx.cleanup_after_upload:
+            try:
+                cleanup_track_artifacts(
+                    track.video_id, ctx.model, ctx.tmp_dir, ctx.output_dir,
+                )
+            except Exception as e:
+                logger.warning("Cleanup failed for %s: %s", track.title, e)
+        report.tracks.append(
+            TrackReport(track.video_id, track.title, artist, "short_processed")
+        )
+        return
+
     if ctx.history.is_uploaded(track.video_id, ctx.model):
+        upload_rec = ctx.history.get_upload_record(track.video_id, ctx.model)
+        long_form_yt_id = upload_rec.youtube_upload_id if upload_rec else ""
+        if ctx.label_config.upload_short or ctx.label_config.upload_short_if_music_video:
+            if not ctx.history.is_short_uploaded(track.video_id, ctx.model) and ctx.history.get_short_status(track.video_id, ctx.model) not in ("skipped_not_music_video", "skipped_disabled"):
+                start_time = 0.0
+                sep_record = ctx.history.get_separation_record(track.video_id, ctx.model)
+                if sep_record and sep_record.trim_start_seconds > 0.0:
+                    start_time = sep_record.trim_start_seconds
+                elif track.video_id in ctx.trim_start_times:
+                    start_time = ctx.trim_start_times[track.video_id]
+                _upload_short_track(track, artist, album, long_form_yt_id, start_time, ctx, report)
+
         logger.info("Already uploaded: %s", track.title)
         report.skipped += 1
         report.tracks.append(
@@ -211,15 +499,19 @@ def _upload_track(
         )
         return
 
+    primary_artist = ctx.label_config.artist_aliases.resolve(
+        strip_topic_suffix(track.channel_name or artist)
+    )
     title = render_video_title(
         ctx.label_config.video_title_template,
-        primary_artist=track.channel_name or artist,
+        primary_artist=primary_artist,
         raw_title=track.title,
-        all_artists=split_artists(artist),
+        all_artists=[strip_topic_suffix(a) for a in split_artists(artist)],
         album_name=album,
         model_name=ctx.display_name,
         label_name=ctx.label_config.label_name,
         aliases=ctx.label_config.artist_aliases,
+        preserve_original_video_title=ctx.preserve_original_video_title,
     )
     description = render_description(
         ctx.label_config.video_description_template,
@@ -245,11 +537,30 @@ def _upload_track(
         try:
             assign_to_playlists(
                 ctx.service, ctx.history, ctx.label_config, yt_video_id,
-                artist, album, track.channel_name or artist,
+                strip_topic_suffix(artist), album, primary_artist,
                 privacy=ctx.privacy, track_title=track.title,
             )
+
         except Exception as e:
             logger.error("Playlist assignment failed for %s: %s", track.title, e)
+
+        # Upload Short if configured
+        if ctx.label_config.upload_short or ctx.label_config.upload_short_if_music_video:
+            start_time = 0.0
+            if sep_record and sep_record.trim_start_seconds > 0.0:
+                start_time = sep_record.trim_start_seconds
+            elif track.video_id in ctx.trim_start_times:
+                start_time = ctx.trim_start_times[track.video_id]
+            _upload_short_track(track, artist, album, yt_video_id, start_time, ctx, report)
+
+        if ctx.cleanup_after_upload:
+            try:
+                cleanup_track_artifacts(
+                    track.video_id, ctx.model, ctx.tmp_dir, ctx.output_dir,
+                )
+            except Exception as e:
+                # Cleanup failure must never demote a successful upload.
+                logger.warning("Cleanup failed for %s: %s", track.title, e)
 
         report.tracks.append(
             TrackReport(

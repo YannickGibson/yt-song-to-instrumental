@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from yt_song_to_instrumental.config import LabelConfig
 from yt_song_to_instrumental.history import HistoryDB
+from yt_song_to_instrumental.music_metadata import AlbumIndex
 from yt_song_to_instrumental.preview import preview_url
 
 
@@ -160,9 +161,9 @@ class TestPreviewUrl:
         cfg = _make_label_config()
         entry = _entry("a", title="Static Crown")
         entry["_source_channel_id"] = "UC123"
+        idx = AlbumIndex({"static crown": "Static Bloom"}, {"static bloom": 9})
         with patch("yt_song_to_instrumental.preview.enumerate_videos", return_value=[entry]), \
-             patch("yt_song_to_instrumental.preview.lookup_album_index",
-                   return_value={"static crown": "Static Bloom"}), \
+             patch("yt_song_to_instrumental.preview.lookup_album_index", return_value=idx), \
              patch("yt_song_to_instrumental.preview.fetch_preview_metadata",
                    return_value=_meta("a", artist="Nyte Vandal", album="", title="Static Crown")):
             report = preview_url("https://yt.com/x", cfg, db)
@@ -175,13 +176,30 @@ class TestPreviewUrl:
         cfg = _make_label_config()
         entry = _entry("a", title="Track")
         entry["_source_channel_id"] = "UC123"
+        idx = AlbumIndex({"track": "Index Album"}, {"index album": 9})
         with patch("yt_song_to_instrumental.preview.enumerate_videos", return_value=[entry]), \
-             patch("yt_song_to_instrumental.preview.lookup_album_index",
-                   return_value={"track": "Index Album"}), \
+             patch("yt_song_to_instrumental.preview.lookup_album_index", return_value=idx), \
              patch("yt_song_to_instrumental.preview.fetch_preview_metadata",
                    return_value=_meta("a", album="Direct Album")):
             report = preview_url("https://yt.com/x", cfg, db)
         assert report.new_videos[0].album == "Direct Album"
+
+    def test_single_track_album_gets_no_album_playlist(self):
+        db = HistoryDB(":memory:")
+        cfg = _make_label_config()
+        entry = _entry("a", title="Lone Single")
+        entry["_source_channel_id"] = "UC123"
+        # The album index knows "Lone Single" is a 1-track release.
+        idx = AlbumIndex({"lone single": "Lone Single"}, {"lone single": 1})
+        with patch("yt_song_to_instrumental.preview.enumerate_videos", return_value=[entry]), \
+             patch("yt_song_to_instrumental.preview.lookup_album_index", return_value=idx), \
+             patch("yt_song_to_instrumental.preview.fetch_preview_metadata",
+                   return_value=_meta("a", artist="Nyte Vandal", album="Lone Single", title="Lone Single")):
+            report = preview_url("https://yt.com/x", cfg, db)
+        # Single-track album → cleared → no album playlist projected.
+        assert report.new_videos[0].album == ""
+        assert report.new_videos[0].projected_album_playlist is None
+        assert report.album_playlist_totals == {}
 
     def test_after_date_filter_uses_ytmusic_date(self):
         db = HistoryDB(":memory:")

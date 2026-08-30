@@ -3,7 +3,8 @@ import re
 
 from yt_song_to_instrumental.config import LabelConfig
 from yt_song_to_instrumental.history import HistoryDB
-from yt_song_to_instrumental.metadata import render_playlist_name
+from yt_song_to_instrumental.metadata import render_playlist_name, strip_topic_suffix
+from yt_song_to_instrumental.music_metadata import album_is_self_titled_single
 from yt_song_to_instrumental.uploader import add_video_to_playlist
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,7 @@ _ARTIST_SPLIT_PATTERN = re.compile(r"\s*(?:,|&|/|\bfeat\.?\s*|\bft\.?\s*|\bx\b)\
 _FEAT_TITLE_PATTERN = re.compile(
     r"\(\s*(?:feat\.?|ft\.?)\s*(.+?)\s*\)", re.IGNORECASE,
 )
+
 
 
 def split_artists(artist: str) -> list[str]:
@@ -28,6 +30,7 @@ def extract_featured_artists(title: str) -> list[str]:
 
 PLAYLIST_TYPE_ARTIST = "artist"
 PLAYLIST_TYPE_ALBUM = "album"
+PLAYLIST_TYPE_CHANNEL = "channel"  # single per-label "all uploads" playlist
 
 
 def _create_playlist(service, title: str, description: str = "", privacy: str = "public") -> str:
@@ -118,6 +121,30 @@ def get_or_create_album_playlist(
     return playlist_id
 
 
+def get_or_create_channel_playlist(
+    service,
+    history: HistoryDB,
+    label_config: LabelConfig,
+    privacy: str = "public",
+) -> str:
+    """Return the single per-label 'all uploads' playlist, creating it on
+    first use. Keyed on the label's channel name."""
+    channel_name = label_config.channel_name
+    record = history.get_playlist(PLAYLIST_TYPE_CHANNEL, channel_name)
+    if record is not None:
+        _ensure_playlist_privacy(service, record.youtube_playlist_id, privacy)
+        return record.youtube_playlist_id
+
+    title = render_playlist_name(
+        label_config.channel_playlist_name_template,
+        channel_name=channel_name,
+        label_name=label_config.label_name,
+    )
+    playlist_id = _create_playlist(service, title, privacy=privacy)
+    history.record_playlist(PLAYLIST_TYPE_CHANNEL, channel_name, None, playlist_id)
+    return playlist_id
+
+
 def project_playlist_artists(
     label_config: LabelConfig,
     artist: str,
@@ -133,10 +160,11 @@ def project_playlist_artists(
     is false, only the primary artist is used.
     """
     resolver = label_config.artist_aliases
-    names = [primary_artist]
+    clean_primary = strip_topic_suffix(primary_artist)
+    names = [clean_primary]
     if label_config.create_playlists_for_collaborators:
         candidates = split_artists(artist) + extract_featured_artists(track_title)
-        names += [c for c in candidates if resolver.is_known(c)]
+        names += [strip_topic_suffix(c) for c in candidates if resolver.is_known(c)]
 
     seen: set[str] = set()
     resolved_names: list[str] = []
@@ -148,6 +176,7 @@ def project_playlist_artists(
         seen.add(normalized)
         resolved_names.append(resolved)
     return resolved_names
+
 
 
 def project_playlist_names(
@@ -191,13 +220,20 @@ def assign_to_playlists(
     privacy: str = "public",
     track_title: str = "",
 ) -> None:
+    # Every upload also goes into the single per-label "all uploads" playlist —
+    # the chronological feed of everything this channel has published.
+    channel_playlist_id = get_or_create_channel_playlist(
+        service, history, label_config, privacy,
+    )
+    add_video_to_playlist(service, channel_playlist_id, video_id)
+
     for resolved in project_playlist_artists(label_config, artist, track_title, primary_artist):
         artist_playlist_id = get_or_create_artist_playlist(
             service, history, label_config, resolved, privacy,
         )
         add_video_to_playlist(service, artist_playlist_id, video_id)
 
-    if album:
+    if album and not album_is_self_titled_single(album, track_title):
         album_artist = label_config.artist_aliases.resolve(primary_artist)
         album_playlist_id = get_or_create_album_playlist(
             service, history, label_config, album_artist, album, privacy,

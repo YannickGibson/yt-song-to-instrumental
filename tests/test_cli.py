@@ -9,8 +9,11 @@ from yt_song_to_instrumental.pipeline import PipelineReport, TrackReport
 from yt_song_to_instrumental.preview import PreviewReport
 
 
-def _make_label_config(sources: list[Source] | None = None) -> LabelConfig:
-    return LabelConfig({
+def _make_label_config(
+    sources: list[Source] | None = None,
+    default_model: str | None = None,
+) -> LabelConfig:
+    data = {
         "channel": {"name": "Test", "description": "T"},
         "label": {"name": "TestLabel"},
         "templates": {
@@ -20,8 +23,11 @@ def _make_label_config(sources: list[Source] | None = None) -> LabelConfig:
             "artist_playlist_name": "<artist-name>",
         },
         "create_playlists_for_collaborators": True,
-        "sources": [{"url": s.url, "after_date": s.after_date} for s in (sources or [])],
-    })
+        "sources": [{"url": s.url, "after_date": s.after_date, "tab": s.tab} for s in (sources or [])],
+    }
+    if default_model is not None:
+        data["default_model"] = default_model
+    return LabelConfig(data)
 
 
 class TestListModels:
@@ -31,7 +37,7 @@ class TestListModels:
 
         output = capsys.readouterr().out
         assert "htdemucs" in output
-        assert "mdxnet" in output
+        assert "inst_hq_4" in output
         assert "GPU required" in output
         assert "Min memory" in output
 
@@ -150,11 +156,177 @@ class TestPipelineReportPrint:
 
 class TestConfig:
     def test_loads_config_from_env(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("SEPARATOR_MODEL", "mdxnet")
+        monkeypatch.setenv("SEPARATOR_MODEL", "inst_hq_4")
         monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "out"))
         monkeypatch.setenv("TMP_DIR", str(tmp_path / "tmp"))
         monkeypatch.setenv("DB_PATH", ":memory:")
 
         from yt_song_to_instrumental.config import AppConfig
         config = AppConfig()
-        assert config.separator_model == "mdxnet"
+        assert config.separator_model == "inst_hq_4"
+
+
+class TestModelPrecedence:
+    """--model (if passed) > label_config.default_model > DEFAULT_MODEL."""
+
+    def test_label_default_used_when_no_cli_model(self):
+        cfg = _make_label_config(
+            sources=[Source(url="https://yt.com/a", after_date=None)],
+            default_model="inst_hq_4",
+        )
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert mock_process.call_args.kwargs["model_name"] == "inst_hq_4"
+
+    def test_cli_model_overrides_label_default(self):
+        cfg = _make_label_config(
+            sources=[Source(url="https://yt.com/a", after_date=None)],
+            default_model="inst_hq_4",
+        )
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload", "--model", "htdemucs"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert mock_process.call_args.kwargs["model_name"] == "htdemucs"
+
+    def test_falls_back_to_htdemucs_when_neither_set(self):
+        cfg = _make_label_config(
+            sources=[Source(url="https://yt.com/a", after_date=None)],
+        )
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert mock_process.call_args.kwargs["model_name"] == "htdemucs"
+
+
+class TestTrimPrecedence:
+    def test_cli_trim_silence_overrides_config_false(self):
+        cfg = _make_label_config(
+            sources=[Source(url="https://yt.com/a", after_date=None)],
+        )
+        # trim_silence is False in config by default
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload", "--trim-silence"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert mock_process.call_args.kwargs["trim_silence"] is True
+
+    def test_cli_no_trim_silence_overrides_config_true(self):
+        cfg = _make_label_config(
+            sources=[Source(url="https://yt.com/a", after_date=None)],
+        )
+        cfg.trim_silence = True  # Mock label config having trim_silence = True
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload", "--no-trim-silence"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert mock_process.call_args.kwargs["trim_silence"] is False
+
+    def test_uses_config_default_when_unset_on_cli(self):
+        cfg = _make_label_config(
+            sources=[Source(url="https://yt.com/a", after_date=None)],
+        )
+        cfg.trim_silence = True
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert mock_process.call_args.kwargs["trim_silence"] is True
+
+
+class TestTabPrecedence:
+    def test_cli_tab_overrides_url_source(self):
+        cfg = _make_label_config(sources=[])
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.preview_url") as mock_preview, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "https://yt.com/c", "--dry-run", "--tab", "releases"]):
+            mock_preview.return_value = PreviewReport(source_url="x", after_date=None)
+            main()
+        assert mock_preview.call_args.kwargs["tab"] == "releases"
+
+    def test_source_tab_used_by_default(self):
+        cfg = _make_label_config(
+            sources=[Source(url="https://yt.com/a", after_date=None, tab="releases")],
+        )
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.preview_url") as mock_preview, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--dry-run"]):
+            mock_preview.return_value = PreviewReport(source_url="x", after_date=None)
+            main()
+        assert mock_preview.call_args.kwargs["tab"] == "releases"
+
+
+class TestShortsCliPrecedence:
+    def test_cli_upload_short_sets_config(self):
+        cfg = _make_label_config(sources=[Source(url="https://yt.com/a", after_date=None)])
+        cfg.upload_short = False
+        cfg.upload_short_if_music_video = False
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload", "--upload-short"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert cfg.upload_short is True
+        assert cfg.upload_short_if_music_video is False
+
+    def test_cli_upload_short_if_music_video_sets_config(self):
+        cfg = _make_label_config(sources=[Source(url="https://yt.com/a", after_date=None)])
+        cfg.upload_short = True
+        cfg.upload_short_if_music_video = False
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload", "--upload-short-if-music-video"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert cfg.upload_short is False
+        assert cfg.upload_short_if_music_video is True
+
+    def test_cli_no_upload_short_disables_shorts(self):
+        cfg = _make_label_config(sources=[Source(url="https://yt.com/a", after_date=None)])
+        cfg.upload_short_if_music_video = True
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload", "--no-upload-short"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert cfg.upload_short is False
+        assert cfg.upload_short_if_music_video is False
+
+    def test_cli_both_short_flags_errors(self):
+        cfg = _make_label_config(sources=[Source(url="https://yt.com/a", after_date=None)])
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch.object(sys, "argv", ["yt-instrumental", "--upload-short", "--upload-short-if-music-video"]):
+            with pytest.raises(SystemExit) as exc:
+                main()
+            assert exc.value.code == 2
+
+    def test_cli_shorts_only_passed_to_process_url(self):
+        cfg = _make_label_config(sources=[Source(url="https://yt.com/a", after_date=None)])
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url") as mock_process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload", "--shorts-only"]):
+            mock_process.return_value = PipelineReport()
+            main()
+        assert mock_process.call_args.kwargs["shorts_only"] is True
+

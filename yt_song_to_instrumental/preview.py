@@ -9,7 +9,7 @@ from yt_song_to_instrumental.downloader import (
     fetch_preview_metadata,
 )
 from yt_song_to_instrumental.history import HistoryDB
-from yt_song_to_instrumental.metadata import render_video_title
+from yt_song_to_instrumental.metadata import render_video_title, strip_topic_suffix
 from yt_song_to_instrumental.music_metadata import lookup_album_index
 from yt_song_to_instrumental.playlists import project_playlist_names
 
@@ -46,7 +46,7 @@ class PreviewReport:
 
 
 def _entry_url(entry: dict) -> str:
-    return entry.get("url") or entry.get("webpage_url") or ""
+    return entry.get("webpage_url") or entry.get("url") or f"https://www.youtube.com/watch?v={entry.get('id', '')}"
 
 
 def _flat_fallback_title(entry: dict) -> str:
@@ -54,7 +54,8 @@ def _flat_fallback_title(entry: dict) -> str:
 
 
 def _flat_fallback_uploader(entry: dict) -> str:
-    return entry.get("uploader") or entry.get("channel") or "Unknown"
+    raw = entry.get("uploader") or entry.get("channel") or "Unknown"
+    return strip_topic_suffix(raw)
 
 
 def preview_url(
@@ -63,11 +64,14 @@ def preview_url(
     history: HistoryDB,
     after_date: str | None = None,
     model_name: str = DEFAULT_MODEL,
+    preserve_original_video_title: bool = False,
+    is_uploader: bool = False,
+    tab: str = "videos",
 ) -> PreviewReport:
     report = PreviewReport(source_url=url, after_date=after_date)
     model_display = MODEL_DISPLAY_NAMES.get(model_name, model_name)
 
-    entries = enumerate_videos(url, after_date=after_date)
+    entries = enumerate_videos(url, after_date=after_date, tab=tab)
     if not entries:
         report.enumeration_failed = True
         return report
@@ -84,7 +88,7 @@ def preview_url(
         if e.get("_source_channel_id"):
             source_channel_id = e["_source_channel_id"]
             break
-    album_index = lookup_album_index(source_channel_id) if source_channel_id else {}
+    album_index = lookup_album_index(source_channel_id)
 
     for entry in entries:
         video_id = entry.get("id") or ""
@@ -99,6 +103,7 @@ def preview_url(
             video_id,
             fallback_title=_flat_fallback_title(entry),
             fallback_uploader=_flat_fallback_uploader(entry),
+            fallback_album=entry.get("_album_title", ""),
         )
 
         track_date = entry.get("upload_date") or meta.get("_upload_date")
@@ -106,16 +111,18 @@ def preview_url(
             report.filtered_by_date += 1
             continue
 
-        if not meta["album"] and album_index:
-            meta["album"] = album_index.get(meta["title"].strip().lower(), "")
+        album = meta["album"] or album_index.album_for(meta["title"])
+        # Single-track "albums" are singles — drop them so no album playlist forms.
+        meta["album"] = "" if album_index.is_single(album, meta["title"]) else album
 
-        primary_artist = (
+        raw_primary = (
             entry.get("_source_channel")
             or entry.get("uploader")
             or entry.get("channel")
             or meta["artist"]
             or "Unknown"
         )
+        primary_artist = label_config.artist_aliases.resolve(strip_topic_suffix(raw_primary))
         artist_playlists, album_playlist = project_playlist_names(
             label_config, meta["artist"], meta["album"], meta["title"], primary_artist,
         )
@@ -128,6 +135,7 @@ def preview_url(
             model_name=model_display,
             label_name=label_config.label_name,
             aliases=label_config.artist_aliases,
+            preserve_original_video_title=preserve_original_video_title or is_uploader,
         )
 
         report.new_videos.append(PreviewTrack(

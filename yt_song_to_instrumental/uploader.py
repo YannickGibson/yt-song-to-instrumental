@@ -11,9 +11,7 @@ from googleapiclient.http import MediaFileUpload
 from yt_song_to_instrumental.constants import (
     RETRYABLE_UPLOAD_REASONS,
     UPLOAD_CHUNK_SIZE_BYTES,
-    UPLOAD_RETRY_BACKOFF_MULTIPLIER,
-    UPLOAD_RETRY_INITIAL_WAIT_SECONDS,
-    UPLOAD_RETRY_MAX_WAIT_SECONDS,
+    UPLOAD_RETRY_BACKOFF_SCHEDULE_SECONDS,
     YOUTUBE_CATEGORY_MUSIC,
     YOUTUBE_SCOPE,
     YOUTUBE_UPLOAD_SCOPE,
@@ -63,9 +61,11 @@ def _extract_error_reason(err: HttpError) -> str:
 
 
 def _retry_wait_for(attempt: int) -> float:
-    """Exponential backoff in seconds, capped at UPLOAD_RETRY_MAX_WAIT_SECONDS."""
-    wait = UPLOAD_RETRY_INITIAL_WAIT_SECONDS * (UPLOAD_RETRY_BACKOFF_MULTIPLIER ** (attempt - 1))
-    return min(wait, UPLOAD_RETRY_MAX_WAIT_SECONDS)
+    """Look up the wait duration (seconds) for retry `attempt` (1-indexed) from
+    the tuned schedule. Past the end of the schedule, the final value repeats."""
+    schedule = UPLOAD_RETRY_BACKOFF_SCHEDULE_SECONDS
+    idx = min(max(attempt, 1) - 1, len(schedule) - 1)
+    return float(schedule[idx])
 
 
 def _do_single_upload_attempt(service, body: dict, file_path: Path, title: str) -> str:
@@ -163,6 +163,15 @@ def list_channel_videos(service, channel_id: str, max_results: int = 500) -> set
 
 
 def add_video_to_playlist(service, playlist_id: str, video_id: str) -> None:
+    try:
+        res = service.playlistItems().list(playlistId=playlist_id, part="snippet", maxResults=50).execute()
+        for item in res.get("items", []):
+            if item.get("snippet", {}).get("resourceId", {}).get("videoId") == video_id:
+                logger.info("Video %s is already in playlist %s; skipping duplicate insertion", video_id, playlist_id)
+                return
+    except Exception as e:
+        logger.warning("Could not check existing items for playlist %s: %s", playlist_id, e)
+
     body = {
         "snippet": {
             "playlistId": playlist_id,

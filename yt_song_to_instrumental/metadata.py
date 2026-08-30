@@ -6,6 +6,7 @@ from yt_song_to_instrumental.constants import (
     TAG_ALBUM_NAME,
     TAG_ARTIST_NAME,
     TAG_ARTIST_TAG,
+    TAG_CHANNEL_NAME,
     TAG_CHANNEL_URL,
     TAG_LABEL_NAME,
     TAG_MODEL_NAME,
@@ -15,11 +16,21 @@ from yt_song_to_instrumental.constants import (
     TAG_VIDEO_TITLE,
     TEMPLATE_TAG_PATTERN,
     TITLE_PARENTHETICAL_PATTERN,
+    TOPIC_SUFFIX_PATTERN,
     YOUTUBE_TITLE_MAX_LENGTH,
 )
 
 _TITLE_PARENS_RE = re.compile(TITLE_PARENTHETICAL_PATTERN)
+_TOPIC_SUFFIX_RE = re.compile(TOPIC_SUFFIX_PATTERN, re.IGNORECASE)
 _TEMPLATE_TAG_RE = re.compile(TEMPLATE_TAG_PATTERN)
+
+
+def strip_topic_suffix(text: str) -> str:
+    """Strip trailing auto-generated YouTube Topic channel suffixes (e.g. ' - Topic') from names."""
+    if not text:
+        return ""
+    return _TOPIC_SUFFIX_RE.sub("", text).strip()
+
 # Strips ALL parenthetical segments, including (feat. X) ones. Used inside
 # render_video_title once features have been harvested from the title.
 _ALL_PARENS_RE = re.compile(r"\s*\([^)]*\)\s*")
@@ -131,8 +142,12 @@ def render_template(
     model_name: str = "",
     label_name: str = "",
     channel_url: str = "",
+    channel_name: str = "",
     video_title: str = "",
+    full_video_url: str = "",
 ) -> str:
+    from yt_song_to_instrumental.constants import TAG_FULL_VIDEO_URL
+
     replacements = {
         TAG_ARTIST_NAME: _sanitize_text(artist_name),
         TAG_TRACK_TITLE: _sanitize_text(track_title),
@@ -143,7 +158,9 @@ def render_template(
         TAG_LABEL_NAME: _sanitize_text(label_name),
         TAG_ARTIST_TAG: _sanitize_for_hashtag(artist_name),
         TAG_CHANNEL_URL: channel_url,
+        TAG_CHANNEL_NAME: _sanitize_text(channel_name),
         TAG_VIDEO_TITLE: _sanitize_text(video_title),
+        TAG_FULL_VIDEO_URL: full_video_url,
     }
 
     result = template
@@ -174,6 +191,24 @@ def render_title(
     return title
 
 
+_TOPIC_PREFIX_RE = re.compile(r"^\s*.*?\s*[\-–—]\s*topic\s*[\-–—]\s*", re.IGNORECASE)
+
+
+def render_short_title(video_title: str) -> str:
+    """Format YouTube Short title by extracting the song name (removing all artists,
+    features, parentheticals, and teaser markers) and returning '<song name> (Instrumental)'."""
+    cleaned = _strip_all_parens(video_title)
+    cleaned = _TOPIC_PREFIX_RE.sub("", cleaned)
+    cleaned, _ = _split_unparenthesized_features(cleaned)
+    split = _split_title_on_dash(cleaned)
+    if split is not None:
+        cleaned = split[1]
+    song_name = _collapse_whitespace(cleaned).strip()
+    if not song_name:
+        song_name = _collapse_whitespace(_strip_all_parens(video_title)).strip() or video_title.strip()
+    return _truncate(_collapse_whitespace(f"{song_name} (Instrumental)"))
+
+
 def render_description(
     template: str,
     artist_name: str = "",
@@ -185,6 +220,7 @@ def render_description(
     label_name: str = "",
     channel_url: str = "",
     video_title: str = "",
+    full_video_url: str = "",
 ) -> str:
     return render_template(
         template,
@@ -197,6 +233,7 @@ def render_description(
         label_name=label_name,
         channel_url=channel_url,
         video_title=video_title,
+        full_video_url=full_video_url,
     )
 
 
@@ -205,38 +242,55 @@ def render_playlist_name(
     artist_name: str = "",
     album_name: str = "",
     label_name: str = "",
+    channel_name: str = "",
 ) -> str:
     return render_template(
         template,
         artist_name=artist_name,
         album_name=album_name,
         label_name=label_name,
+        channel_name=channel_name,
     )
 
 
+_DASH_SPLIT_RE = re.compile(r"\s+[\-–—]\s+")
+
+
 def _split_title_on_dash(title: str) -> tuple[str, str] | None:
-    parts = title.split(" - ", 1)
+    parts = _DASH_SPLIT_RE.split(title, 1)
     if len(parts) != 2:
         return None
     return parts[0], parts[1]
 
 
+
 def _matches_primary_alone(lhs: str, primary_variants: list[str]) -> bool:
-    variants = {v.strip().lower() for v in primary_variants}
-    return lhs.strip().lower() in variants
+    clean_lhs = strip_topic_suffix(lhs)
+    variants = {strip_topic_suffix(v).strip().lower() for v in primary_variants}
+    return lhs.strip().lower() in variants or clean_lhs.strip().lower() in variants
 
 
 def _is_multi_artist_credit(lhs: str, primary_variants: list[str]) -> bool:
     parts = [p.strip() for p in _ARTIST_SPLIT_PATTERN.split(lhs) if p.strip()]
     if len(parts) < 2:
         return False
-    variants = {v.strip().lower() for v in primary_variants}
-    return any(p.lower() in variants for p in parts)
+    variants = {strip_topic_suffix(v).strip().lower() for v in primary_variants}
+    return any(p.lower() in variants or strip_topic_suffix(p).lower() in variants for p in parts)
+
 
 
 def _truncate(title: str) -> str:
     if len(title) > YOUTUBE_TITLE_MAX_LENGTH:
         return title[:YOUTUBE_TITLE_MAX_LENGTH - 3] + "..."
+    return title
+
+
+def _strip_leading_topic_artist(title: str, primary_variants: list[str]) -> str:
+    for v in primary_variants:
+        clean_v = strip_topic_suffix(v)
+        pattern = re.compile(r"^" + re.escape(clean_v) + r"\s*[\-–—]\s*topic\s*[\-–—]\s*", re.IGNORECASE)
+        if pattern.search(title):
+            return pattern.sub(f"{clean_v} — ", title)
     return title
 
 
@@ -249,7 +303,16 @@ def render_video_title(
     model_name: str,
     label_name: str,
     aliases: ArtistAliasResolver,
+    preserve_original_video_title: bool = False,
+    is_uploader: bool = False,
 ) -> str:
+    if preserve_original_video_title or is_uploader:
+        if raw_title.strip().lower().endswith("(instrumental)"):
+            formatted = raw_title
+        else:
+            formatted = f"{raw_title} (Instrumental)"
+        return _truncate(_collapse_whitespace(formatted))
+
     primary_variants = aliases.variants_of(primary_artist)
     primary_lower = primary_artist.strip().lower()
 
@@ -266,6 +329,8 @@ def render_video_title(
     parenthesized_features = _extract_features_from_title(raw_title)
     cleaned_title = _strip_all_parens(raw_title) or raw_title
     cleaned_title, unparen_features = _split_unparenthesized_features(cleaned_title)
+    cleaned_title = _strip_leading_topic_artist(cleaned_title, primary_variants)
+
 
     # Canonicalize + dedup all feature sources, preserving order: YTMusic first,
     # then parenthesized title feats, then un-parenthesized.

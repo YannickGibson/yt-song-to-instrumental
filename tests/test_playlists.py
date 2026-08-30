@@ -172,22 +172,26 @@ class TestAssignToPlaylists:
         db = HistoryDB(db_path=":memory:")
         db.record_playlist("artist", "Riku Vex", None, "PL_artist")
         db.record_playlist("album", "Riku Vex", "Quiet Hours", "PL_album")
+        db.record_playlist("channel", "Test Instrumentals", None, "PL_channel")
         config = _make_label_config()
         service = MagicMock()
 
         assign_to_playlists(service, db, config, "yt_vid_123", "Riku Vex", "Quiet Hours", "Riku Vex")
 
-        assert service.playlistItems().insert.call_count == 2
+        # 3 playlistItems.insert calls: channel + artist + album.
+        assert service.playlistItems().insert.call_count == 3
 
     def test_skips_album_playlist_when_no_album(self):
         db = HistoryDB(db_path=":memory:")
         db.record_playlist("artist", "Riku Vex", None, "PL_artist")
+        db.record_playlist("channel", "Test Instrumentals", None, "PL_channel")
         config = _make_label_config()
         service = MagicMock()
 
         assign_to_playlists(service, db, config, "yt_vid_123", "Riku Vex", "", "Riku Vex")
 
-        assert service.playlistItems().insert.call_count == 1
+        # 2 inserts: channel + artist (no album).
+        assert service.playlistItems().insert.call_count == 2
 
     def test_unknown_collaborator_gets_no_playlist(self):
         # Primary always gets a playlist; an unknown collaborator does not.
@@ -202,7 +206,7 @@ class TestAssignToPlaylists:
 
         assert db.get_playlist("artist", "fauxpelt") is not None
         assert db.get_playlist("artist", "Dj Quartz") is None
-        assert service.playlistItems().insert.call_count == 1
+        assert service.playlistItems().insert.call_count == 2
 
     def test_known_collaborator_gets_a_playlist(self):
         db = HistoryDB(db_path=":memory:")
@@ -216,7 +220,7 @@ class TestAssignToPlaylists:
 
         assert db.get_playlist("artist", "Nyte Vandal") is not None
         assert db.get_playlist("artist", "Hollow Cair") is not None
-        assert service.playlistItems().insert.call_count == 2
+        assert service.playlistItems().insert.call_count == 3
 
     def test_album_playlist_keyed_on_primary_artist(self):
         # Even when the YTMusic artist field is some odd multi-artist string,
@@ -246,7 +250,7 @@ class TestAssignToPlaylists:
         assert db.get_playlist("artist", "Nyte Vandal") is not None
         assert db.get_playlist("artist", "Glasswing Crew") is not None
         assert db.get_playlist("artist", "GWC") is None
-        assert service.playlistItems().insert.call_count == 2
+        assert service.playlistItems().insert.call_count == 3
 
     def test_featured_unknown_artist_from_title_skipped(self):
         db = HistoryDB(db_path=":memory:")
@@ -260,7 +264,51 @@ class TestAssignToPlaylists:
 
         assert db.get_playlist("artist", "Nyte Vandal") is not None
         assert db.get_playlist("artist", "Some Guest") is None
-        assert service.playlistItems().insert.call_count == 1
+        assert service.playlistItems().insert.call_count == 2
+
+    def test_skips_album_playlist_when_album_equals_track_title(self):
+        # YTMusic files a true single as an album named after the track. The
+        # upload path must suppress the album-playlist creation just like the
+        # dry-run preview does.
+        db = HistoryDB(db_path=":memory:")
+        config = _make_label_config()
+        service = _make_mock_service("PL_new")
+
+        assign_to_playlists(
+            service, db, config, "yt_vid_123", "Riku Vex", "Driftwood",
+            primary_artist="Riku Vex", track_title="Driftwood",
+        )
+
+        assert db.get_playlist("album", "Riku Vex", "Driftwood") is None
+        # 2 inserts: channel + artist (no album).
+        assert service.playlistItems().insert.call_count == 2
+
+    def test_skips_album_playlist_when_album_equals_track_title_case_insensitive(self):
+        db = HistoryDB(db_path=":memory:")
+        config = _make_label_config()
+        service = _make_mock_service("PL_new")
+
+        assign_to_playlists(
+            service, db, config, "yt_vid_123", "Riku Vex", "DRIFTWOOD",
+            primary_artist="Riku Vex", track_title="driftwood",
+        )
+
+        assert db.get_playlist("album", "Riku Vex", "DRIFTWOOD") is None
+        assert service.playlistItems().insert.call_count == 2
+
+    def test_keeps_album_playlist_when_album_differs_from_title(self):
+        db = HistoryDB(db_path=":memory:")
+        config = _make_label_config()
+        service = _make_mock_service("PL_new")
+
+        assign_to_playlists(
+            service, db, config, "yt_vid_123", "Riku Vex", "Quiet Hours",
+            primary_artist="Riku Vex", track_title="Driftwood",
+        )
+
+        assert db.get_playlist("album", "Riku Vex", "Quiet Hours") is not None
+        # 3 inserts: channel + artist + album.
+        assert service.playlistItems().insert.call_count == 3
 
     def test_alias_deduplicates_primary_and_collaborator(self):
         db = HistoryDB(db_path=":memory:")
@@ -274,7 +322,7 @@ class TestAssignToPlaylists:
 
         assert db.get_playlist("artist", "Glasswing Crew") is not None
         # primary GWC and featured Glasswing both resolve to the same canonical
-        assert service.playlistItems().insert.call_count == 1
+        assert service.playlistItems().insert.call_count == 2
 
 
 class TestFeaturesToggle:
@@ -294,7 +342,7 @@ class TestFeaturesToggle:
         # Flag off → only the primary, even though Artist B is alias-known.
         assert db.get_playlist("artist", "Artist A") is not None
         assert db.get_playlist("artist", "Artist B") is None
-        assert service.playlistItems().insert.call_count == 1
+        assert service.playlistItems().insert.call_count == 2
 
     def test_features_off_ignores_feat_in_title(self):
         db = HistoryDB(db_path=":memory:")
@@ -311,7 +359,7 @@ class TestFeaturesToggle:
 
         assert db.get_playlist("artist", "Nyte Vandal") is not None
         assert db.get_playlist("artist", "Hollow Cair") is None
-        assert service.playlistItems().insert.call_count == 1
+        assert service.playlistItems().insert.call_count == 2
 
     def test_features_off_resolves_primary_through_alias(self):
         db = HistoryDB(db_path=":memory:")
@@ -340,7 +388,42 @@ class TestFeaturesToggle:
 
         assert db.get_playlist("artist", "fauxpelt") is not None
         assert db.get_playlist("album", "fauxpelt", "Joint Album") is not None
-        assert service.playlistItems().insert.call_count == 2
+        assert service.playlistItems().insert.call_count == 3
+
+
+class TestChannelPlaylist:
+    def test_channel_playlist_created_and_video_added(self):
+        # A bare config (no artist/album given) should still produce the
+        # channel-level "all uploads" playlist for every track.
+        db = HistoryDB(db_path=":memory:")
+        config = _make_label_config()
+        service = _make_mock_service("PL_channel")
+
+        assign_to_playlists(
+            service, db, config, "yt_vid_42", "Solo Artist", "",
+            primary_artist="Solo Artist",
+        )
+
+        # DB has the channel playlist row keyed on the channel name.
+        rec = db.get_playlist("channel", "Test Instrumentals")
+        assert rec is not None
+
+    def test_channel_playlist_reused_across_tracks(self):
+        db = HistoryDB(db_path=":memory:")
+        # All playlists pre-recorded so no creation API calls run with a
+        # plain MagicMock (which can't return a real string id).
+        db.record_playlist("channel", "Test Instrumentals", None, "PL_master")
+        db.record_playlist("artist", "A", None, "PL_a")
+        db.record_playlist("artist", "B", None, "PL_b")
+        config = _make_label_config()
+        service = MagicMock()
+
+        assign_to_playlists(service, db, config, "yt_vid_1", "A", "", primary_artist="A")
+        assign_to_playlists(service, db, config, "yt_vid_2", "B", "", primary_artist="B")
+
+        # Single channel playlist row, not duplicated per track.
+        rec = db.get_playlist("channel", "Test Instrumentals")
+        assert rec.youtube_playlist_id == "PL_master"
 
 
 class TestProjectPlaylistNames:

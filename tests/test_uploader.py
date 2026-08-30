@@ -63,15 +63,16 @@ class TestExtractErrorReason:
 
 
 class TestRetryWaitFor:
-    def test_grows_exponentially(self):
-        a, b, c = _retry_wait_for(1), _retry_wait_for(2), _retry_wait_for(3)
-        assert a == 300
-        assert b == 600
-        assert c == 1200
+    def test_schedule_ladder(self):
+        # 10 min → 30 min → 1 h → 2 h
+        assert _retry_wait_for(1) == 600
+        assert _retry_wait_for(2) == 1800
+        assert _retry_wait_for(3) == 3600
+        assert _retry_wait_for(4) == 7200
 
-    def test_caps_at_30_min(self):
-        assert _retry_wait_for(10) == 1800
-        assert _retry_wait_for(20) == 1800
+    def test_repeats_final_value_indefinitely(self):
+        assert _retry_wait_for(5) == 7200
+        assert _retry_wait_for(50) == 7200
 
 
 class TestUploadVideoRetry:
@@ -90,10 +91,10 @@ class TestUploadVideoRetry:
             _sleep=lambda s: sleeps.append(s),
         )
         assert result == "VID_OK"
-        # Two retries → two sleeps
+        # Two retries → two sleeps (10 min, then 30 min from the schedule)
         assert len(sleeps) == 2
-        assert sleeps[0] == 300
-        assert sleeps[1] == 600
+        assert sleeps[0] == 600
+        assert sleeps[1] == 1800
 
     def test_non_retryable_propagates(self, tmp_path):
         f = tmp_path / "x.mp4"
@@ -115,15 +116,16 @@ class TestUploadVideoRetry:
             _make_http_error("uploadLimitExceeded"),
             _make_http_error("uploadLimitExceeded"),
         ])
-        # Cap = 400s. First sleep (300s) fits. Second sleep would be 600s,
-        # which would push total to 900s — exceeds cap of 400s → give up before sleeping.
+        # Cap = 1000s. First sleep (600s = 10 min) fits (total → 600).
+        # Second sleep would be 1800s (30 min), pushing total to 2400 — exceeds
+        # cap → give up before sleeping a second time.
         with pytest.raises(HttpError):
             upload_video(
                 service, f, "title", "desc", "private",
-                max_total_wait_seconds=400,
+                max_total_wait_seconds=1000,
                 _sleep=lambda s: sleeps.append(s),
             )
-        assert sleeps == [300]
+        assert sleeps == [600]
 
     def test_first_try_success(self, tmp_path):
         f = tmp_path / "x.mp4"

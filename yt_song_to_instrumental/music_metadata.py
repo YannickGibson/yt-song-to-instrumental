@@ -22,22 +22,65 @@ class TrackMetadata:
     album: str
 
 
-def lookup_album_index(channel_id: str) -> dict[str, str]:
-    """Build a {track_title_lower: album_name} index for a YT Music artist.
+@dataclass
+class AlbumIndex:
+    """An artist's discography mapped two ways: track title → album name, and
+    album name → track count. The track count lets callers suppress album
+    playlists for single-track releases (a 'single' isn't an album)."""
+    title_to_album: dict[str, str]
+    album_sizes: dict[str, int]
+
+    def album_for(self, title: str) -> str:
+        return self.title_to_album.get(title.strip().lower(), "")
+
+    def is_single(self, album_name: str, track_title: str = "") -> bool:
+        """True when the album is a single-track release. Two signals:
+
+        1. The album appears in this index with track count <= 1.
+        2. The album name equals the track title (see album_is_self_titled_single).
+        """
+        album_key = (album_name or "").strip().lower()
+        size = self.album_sizes.get(album_key)
+        if size is not None and size <= 1:
+            return True
+        return album_is_self_titled_single(album_name, track_title)
+
+
+def album_is_self_titled_single(album_name: str, track_title: str) -> bool:
+    """True when the album name equals the track title — YTMusic files a true
+    single as an 'album' named after the song, and singles live in the artist's
+    'singles' section (not 'albums'), so they don't appear in the AlbumIndex.
+    The name match catches them with zero extra API cost.
+
+    Used both by AlbumIndex.is_single (preview path) and assign_to_playlists
+    (upload path) to suppress an album-playlist creation for singles.
+
+    Trade-off: a legitimate multi-track album with a self-titled track loses
+    just that one track from its album playlist. Rare and cosmetic. Worth it
+    to avoid mass single playlists.
+    """
+    album_key = (album_name or "").strip().lower()
+    title_key = (track_title or "").strip().lower()
+    return bool(album_key) and album_key == title_key
+
+
+def lookup_album_index(channel_id: str) -> AlbumIndex:
+    """Build an AlbumIndex for a YT Music artist.
 
     YTMusic's per-video endpoints (`get_watch_playlist`, `get_song`) return
     `album=None` for artist-channel uploads even when the song is on a known
     album. This index sidesteps that quirk by walking the artist's discography
-    once and mapping every album track's title to its album name.
+    once.
     """
+    empty = AlbumIndex({}, {})
     if not channel_id:
-        return {}
+        return empty
     try:
         yt = _get_client()
         artist = yt.get_artist(channel_id)
     except Exception as e:
         logger.warning("YTMusic get_artist failed for %s: %s", channel_id, e)
-        return {}
+        return empty
     albums_section = artist.get("albums") or {}
     albums = albums_section.get("results") or []
     browse_id = albums_section.get("browseId")
@@ -47,7 +90,8 @@ def lookup_album_index(channel_id: str) -> dict[str, str]:
         except Exception as e:
             logger.warning("YTMusic get_artist_albums failed for %s: %s", channel_id, e)
 
-    index: dict[str, str] = {}
+    title_to_album: dict[str, str] = {}
+    album_sizes: dict[str, int] = {}
     for album_ref in albums:
         album_browse_id = album_ref.get("browseId")
         album_name = album_ref.get("title")
@@ -58,11 +102,13 @@ def lookup_album_index(channel_id: str) -> dict[str, str]:
         except Exception as e:
             logger.warning("YTMusic get_album failed for %s: %s", album_browse_id, e)
             continue
-        for track in album_data.get("tracks") or []:
+        tracks = album_data.get("tracks") or []
+        album_sizes[album_name.strip().lower()] = len(tracks)
+        for track in tracks:
             title = (track.get("title") or "").strip().lower()
-            if title and title not in index:
-                index[title] = album_name
-    return index
+            if title and title not in title_to_album:
+                title_to_album[title] = album_name
+    return AlbumIndex(title_to_album, album_sizes)
 
 
 def lookup_video_date(video_id: str) -> str | None:

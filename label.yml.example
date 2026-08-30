@@ -23,6 +23,7 @@ templates:
   #   <label-name>           — label name from label.name above
   #   <artist-tag>           — artist name sanitized for hashtag use
   #   <channel-url>          — URL of the instrumentals YouTube channel
+  #   <channel-name>         — display name of the instrumentals YouTube channel
 
   video_title: "<artist-name> — <track-title> (Instrumental)"
 
@@ -41,6 +42,23 @@ templates:
 
   album_playlist_name: "<artist-name> — <album-name> (Instrumentals)"
   artist_playlist_name: "<artist-name> (Instrumentals)"
+  # Single per-label playlist that receives every upload, in chronological order.
+  channel_playlist_name: "<channel-name> Uploaded Instrumentals"
+
+  # Optional template for YouTube Shorts. If omitted, defaults to adding
+  # "Full instrumental: <full-video-url>\n\n" before video_description.
+  # short_description: |
+  #   Full instrumental: <full-video-url>
+  #
+  #   <video-title>
+  #   Original video: <original-url>
+  #   <artist-tag> #instrumental #shorts
+
+# YouTube Shorts options (mutually exclusive):
+# upload_short: blindly upload 20s short for every instrumental
+# upload_short_if_music_video: upload 20s short only if source is detected as an active music video
+upload_short: false
+upload_short_if_music_video: false
 
 # When true: create a playlist for every contributor — both co-billed primaries
 # ("A & B", "A, B") and featured guests ("(feat. X)" in titles). When false: use
@@ -49,13 +67,31 @@ templates:
 # auto-promote them — so the public default is false.
 create_playlists_for_collaborators: false
 
-# Source channels to scan. Each entry: a YouTube or YouTube Music channel URL
-# and an after_date (YYYYMMDD) — only videos newer than this are processed.
+# Separation backend used when --model is not passed on the CLI.
+# Choices:
+#   htdemucs   — 4-stem demucs v4. CPU-friendly, ~7x realtime on Pi 4.
+#   inst_hq_4  — UVR-MDX-NET Inst_HQ_4 (ONNX). Cleaner vocals removal but
+#                ~12x realtime + 3 GB RAM on Pi 4. Best on x86/GPU.
+default_model: htdemucs
+
+# When true: trim silent or vocals-only sections at the start and end of instrumentals.
+trim_silence: true
+
+
+# Default tab to scan for source channels ("videos" or "releases"). Defaults to "videos".
+tab: videos
+
+# Source channels to scan. Each entry: a YouTube or YouTube Music channel URL,
+# an after_date (YYYYMMDD), an optional tab ("videos" or "releases"), and optionally
+# preserve_original_video_title: true to preserve the raw video title.
 sources:
   - url: "https://music.youtube.com/@artist1"  # also works: https://youtube.com/@artist1
     after_date: "20260101"
-  - url: "https://youtube.com/@artist2"
+    tab: releases
+  - url: "https://youtube.com/@aggregator_channel"
     after_date: "20260315"
+    preserve_original_video_title: true
+
 
 # Artist alias groups — names that refer to the same artist.
 # The first name in each group is the canonical name used for playlists.

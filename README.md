@@ -6,7 +6,7 @@ Download songs from YouTube, extract instrumentals using AI source separation, a
 
 ## Features
 
-- **Switchable ML models** — HTDemucs, MDX-Net, or add your own
+- **Switchable ML models** — HTDemucs, UVR-MDX-NET Inst_HQ_4, or add your own
 - **Automated YouTube uploads** — OAuth2, resumable uploads, privacy controls
 - **Playlist management** — auto-creates per-artist and per-album playlists
 - **Configurable templates** — video titles, descriptions, and playlist names use `<tag>` syntax
@@ -25,8 +25,8 @@ Download songs from YouTube, extract instrumentals using AI source separation, a
 
 | Model | ID | Min RAM | GPU Required | GPU VRAM | Notes |
 |-------|----|---------|-------------|----------|-------|
-| HTDemucs | `htdemucs` | 4 GB | No (recommended) | 2 GB+ | CPU mode is ~10x slower |
-| MDX-Net | `mdxnet` | 2 GB | No | 1 GB+ | Uses ONNX runtime |
+| HTDemucs | `htdemucs` | 4 GB | No (recommended) | 2 GB+ | 4-stem demucs v4. Measured ~7x realtime on Pi 4. |
+| UVR-MDX-NET Inst_HQ_4 | `inst_hq_4` | 3 GB | No (recommended) | 1 GB+ | ONNX via `audio-separator`. 2-stem vocals/instrumental. Cleaner vocal removal but ~12x realtime on Pi 4 — best on x86/GPU. |
 
 ## Setup
 
@@ -41,11 +41,10 @@ uv sync --extra dev
 To install with a specific model backend:
 
 ```bash
-uv sync --extra demucs     # HTDemucs (torch + torchaudio)
-uv sync --extra mdxnet     # MDX-Net (ONNX runtime, CPU)
-uv sync --extra mdxnet-gpu # MDX-Net (ONNX runtime, GPU)
-uv sync --all-extras       # Everything
+uv sync --all-extras       # Everything (recommended)
 ```
+
+Both backends are installed by `--all-extras`. The `audio-separator` package brings its own ONNX Runtime and downloads model weights on first use.
 
 ### 2. Configure environment
 
@@ -61,7 +60,7 @@ Required `.env` values:
 | `YOUTUBE_CLIENT_SECRETS_FILE` | Path to `client_secrets.json` from Google Cloud Console |
 | `YOUTUBE_TOKEN_FILE` | Where to cache the OAuth token (default: `token.json`) |
 | `YOUTUBE_CHANNEL_ID` | Target YouTube channel ID for uploads |
-| `SEPARATOR_MODEL` | Default model: `htdemucs` or `mdxnet` |
+| `SEPARATOR_MODEL` | (Optional) Default model when not set in `label.yml` — `htdemucs` or `inst_hq_4` |
 
 ### 3. Configure label
 
@@ -113,7 +112,11 @@ uv run yt-instrumental https://youtube.com/@ChannelName
 ```bash
 uv run yt-instrumental --dry-run       # show what would be processed, then exit
 uv run yt-instrumental --skip-upload   # separate only, don't upload
-uv run yt-instrumental --model mdxnet  # use MDX-Net instead of HTDemucs
+uv run yt-instrumental --shorts-only   # process/upload YouTube Shorts only (skip full-length videos)
+uv run yt-instrumental --upload-short  # force uploading Shorts for all tracks in this run
+uv run yt-instrumental --upload-short-if-music-video # upload Shorts only if detected as music video
+uv run yt-instrumental --no-upload-short # disable Shorts uploads for this run
+uv run yt-instrumental --model inst_hq_4  # override label.yml's default_model
 uv run yt-instrumental --sync-channel  # push channel name/description from label.yml
 uv run yt-instrumental --list-models   # list separation models, then exit
 ```
@@ -134,6 +137,16 @@ Used in `label.yml` for video titles, descriptions, and playlist names:
 | `<model-name>` | Separation model used (e.g. HTDemucs) |
 | `<label-name>` | Label name from `label.yml` |
 | `<artist-tag>` | Artist name sanitized for hashtag use |
+| `<full-video-url>` | URL of the uploaded long-form instrumental video (for Shorts descriptions) |
+
+## YouTube Shorts Generation
+
+The pipeline can automatically generate and upload 20-second vertical YouTube Shorts teasers (1080×1920 with 20% top/bottom black bars) for instrumental tracks:
+
+- **`upload_short_if_music_video: true`**: Automatically checks whether the source YouTube video is an active music video using low-overhead frame difference motion detection, skipping static album covers and simple visualizers.
+- **`upload_short: true`**: Uploads Shorts for all processed tracks unconditionally.
+- **Audio/Video Sync**: Automatically aligns video slicing with the instrumental start trim offset.
+- **Titles & Descriptions**: Automatically formats titles as `<song name> (Instrumental)` and inserts the link to the full instrumental video.
 
 ## Playlist Management
 

@@ -26,6 +26,8 @@ dependencies = [
     "yt-dlp",
     "ytmusicapi",
     "pyyaml",
+    "audio-separator>=0.44.2",
+    "quickjs>=1.19.4",
 ]
 
 [project.optional-dependencies]

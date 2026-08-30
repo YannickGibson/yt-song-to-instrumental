@@ -75,9 +75,12 @@ class TestSeparations:
 
     def test_record_and_check_separation(self):
         db = make_db()
-        db.record_separation("abc123", "htdemucs", "/tmp/instrumental.wav", True)
+        db.record_separation("abc123", "htdemucs", "/tmp/instrumental.wav", True, trim_start_seconds=3.35)
         assert db.is_separated("abc123", "htdemucs") is True
         assert db.is_separated("abc123", "mdxnet") is False
+        rec = db.get_separation_record("abc123", "htdemucs")
+        assert rec is not None
+        assert rec.trim_start_seconds == 3.35
 
     def test_get_unprocessed(self):
         db = make_db()
@@ -132,6 +135,26 @@ class TestUploads:
 
         pending = db.get_pending_upload("htdemucs")
         assert len(pending) == 0
+
+    def test_record_and_check_short_upload(self):
+        db = make_db()
+        assert db.is_short_uploaded("vid1", "htdemucs") is False
+        db.record_short_upload("vid1", "htdemucs", "yt_short_123", is_music_video=True)
+        assert db.is_short_uploaded("vid1", "htdemucs") is True
+        assert db.get_short_status("vid1", "htdemucs") == "uploaded"
+        rec = db.get_upload_record("vid1", "htdemucs")
+        assert rec is not None
+        assert rec.youtube_short_upload_id == "yt_short_123"
+        assert rec.is_music_video == 1
+
+    def test_record_short_status_skipped(self):
+        db = make_db()
+        db.record_short_status("vid2", "htdemucs", "skipped_not_music_video", is_music_video=False)
+        assert db.is_short_uploaded("vid2", "htdemucs") is False
+        assert db.get_short_status("vid2", "htdemucs") == "skipped_not_music_video"
+        rec = db.get_upload_record("vid2", "htdemucs")
+        assert rec is not None
+        assert rec.is_music_video == 0
 
 
 class TestPlaylists:

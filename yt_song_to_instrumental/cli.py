@@ -153,7 +153,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("url", nargs="?", help="YouTube URL (video, playlist, or channel). If omitted, uses `sources:` from label.yml.")
-    parser.add_argument("--model", choices=AVAILABLE_MODELS, default=DEFAULT_MODEL, help="Separation model to use")
+    parser.add_argument("--model", choices=AVAILABLE_MODELS, default=None, help="Separation model to use. If omitted, uses default_model from label.yml (which itself defaults to '" + DEFAULT_MODEL + "').")
     parser.add_argument("--skip-upload", action="store_true", help="Separate only, do not upload")
     parser.add_argument("--skip-download", action="store_true", help="Process already-downloaded files only")
     parser.add_argument("--privacy", choices=VALID_PRIVACY_STATUSES, default=None, help="YouTube privacy status")
@@ -164,6 +164,16 @@ def main() -> None:
     parser.add_argument("--after-date", default=None, help="Only process videos uploaded after this date (YYYYMMDD). Valid only with an explicit URL, not with sources mode.")
     parser.add_argument("--upload-timeout", type=float, default=None, help="Cap on cumulative retry wait (minutes) for a single upload that hits YouTube's rate limit. Default: no cap, retry indefinitely.")
     parser.add_argument("--sync-channel", action="store_true", help="Update YouTube channel metadata from label.yml")
+    parser.add_argument("--no-cleanup", action="store_true", help="Skip post-upload cleanup of on-disk artifacts (raw WAV, stems, rendered MP4). Default: cleanup is on.")
+    parser.add_argument("--cleanup-uploaded", action="store_true", help="Sweep on-disk artifacts for every track already in the uploads table, then exit. Use to reclaim disk after enabling cleanup on an existing install.")
+    parser.add_argument("--trim-silence", action="store_true", default=None, help="Trim vocals-only silence from start/end of instrumentals")
+    parser.add_argument("--no-trim-silence", action="store_true", help="Do not trim silence even if enabled in config")
+    parser.add_argument("--tab", choices=["videos", "releases"], default=None, help="YouTube channel tab to scan (videos or releases). Default: videos")
+    parser.add_argument("--preserve-original-video-title", "--is-uploader", dest="preserve_original_video_title", action="store_true", help="Preserve original video title without applying label template formatting")
+    parser.add_argument("--shorts-only", action="store_true", help="Process and upload YouTube Shorts only (skip long-form video rendering/uploading)")
+    parser.add_argument("--upload-short", action="store_true", help="Force Shorts upload for all processed tracks in this run")
+    parser.add_argument("--upload-short-if-music-video", action="store_true", help="Upload Shorts only if detected as music video in this run")
+    parser.add_argument("--no-upload-short", action="store_true", help="Do not upload Shorts in this run")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
@@ -175,6 +185,30 @@ def main() -> None:
 
     if args.list_models:
         _list_models()
+        return
+
+    if args.cleanup_uploaded:
+        from pathlib import Path
+        from yt_song_to_instrumental.cleanup import (
+            cleanup_all_uploaded,
+            cleanup_orphan_artifacts,
+        )
+        app_config = AppConfig()
+        history = HistoryDB(app_config.db_path)
+        try:
+            tmp_path = Path(app_config.tmp_dir)
+            out_path = Path(app_config.output_dir)
+            uploaded = cleanup_all_uploaded(history, tmp_path, out_path)
+            orphans = cleanup_orphan_artifacts(history, tmp_path, out_path)
+            total_files = len(uploaded.removed_files) + len(orphans.removed_files)
+            total_mb = (uploaded.bytes_freed + orphans.bytes_freed) / (1024 * 1024)
+            print(
+                f"Cleanup complete: {total_files} files removed ({total_mb:.1f} MB freed) "
+                f"— {len(uploaded.removed_files)} from uploaded tracks, "
+                f"{len(orphans.removed_files)} orphans (no matching DB row)."
+            )
+        finally:
+            history.close()
         return
 
     if args.sync_channel:
@@ -189,15 +223,57 @@ def main() -> None:
 
     app_config = AppConfig()
     label_config = _load_label_config_or_exit()
+    effective_model = args.model or label_config.default_model
+
+    if args.upload_short and args.upload_short_if_music_video:
+        parser.error("Cannot specify both --upload-short and --upload-short-if-music-video")
+
+    if args.upload_short:
+        label_config.upload_short = True
+        label_config.upload_short_if_music_video = False
+    elif args.upload_short_if_music_video:
+        label_config.upload_short = False
+        label_config.upload_short_if_music_video = True
+    elif args.no_upload_short:
+        label_config.upload_short = False
+        label_config.upload_short_if_music_video = False
+    elif args.shorts_only and not label_config.upload_short and not label_config.upload_short_if_music_video:
+        label_config.upload_short_if_music_video = True
+
+    # Determine trim_silence setting: CLI flags override config file
+    if args.trim_silence:
+        trim_silence = True
+    elif args.no_trim_silence:
+        trim_silence = False
+    else:
+        trim_silence = label_config.trim_silence
 
     if args.url:
-        sources_to_run: list[Source] = [Source(url=args.url, after_date=args.after_date)]
+        sources_to_run: list[Source] = [
+            Source(
+                url=args.url,
+                after_date=args.after_date,
+                preserve_original_video_title=args.preserve_original_video_title,
+                tab=args.tab or label_config.tab,
+            )
+        ]
     elif label_config.sources:
         if args.after_date:
             parser.error(
                 "--after-date is only valid with an explicit URL; sources in label.yml carry per-entry after_date"
             )
-        sources_to_run = list(label_config.sources)
+        if args.tab:
+            sources_to_run = [
+                Source(
+                    url=s.url,
+                    after_date=s.after_date,
+                    preserve_original_video_title=s.preserve_original_video_title,
+                    tab=args.tab,
+                )
+                for s in label_config.sources
+            ]
+        else:
+            sources_to_run = list(label_config.sources)
     else:
         parser.error("url is required (no sources defined in label.yml)")
 
@@ -217,7 +293,9 @@ def main() -> None:
                     label_config=label_config,
                     history=history,
                     after_date=src.after_date,
-                    model_name=args.model,
+                    model_name=effective_model,
+                    preserve_original_video_title=args.preserve_original_video_title or src.preserve_original_video_title,
+                    tab=src.tab,
                 )
                 _print_preview_report(report)
             return
@@ -235,7 +313,7 @@ def main() -> None:
                 config=app_config,
                 label_config=label_config,
                 service=service,
-                model_name=args.model,
+                model_name=effective_model,
                 privacy=args.privacy,
                 skip_upload=args.skip_upload,
                 skip_download=args.skip_download,
@@ -244,6 +322,11 @@ def main() -> None:
                 after_date=src.after_date,
                 history=history,
                 upload_max_wait_seconds=upload_timeout_seconds,
+                cleanup_after_upload=not args.no_cleanup,
+                trim_silence=trim_silence,
+                preserve_original_video_title=args.preserve_original_video_title or src.preserve_original_video_title,
+                tab=src.tab,
+                shorts_only=args.shorts_only,
             )
             _print_pipeline_report(report)
     finally:

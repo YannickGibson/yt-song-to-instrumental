@@ -1,11 +1,42 @@
 from unittest.mock import patch, MagicMock
 
 from yt_song_to_instrumental.music_metadata import (
+    album_is_self_titled_single,
     lookup_album_index,
     lookup_track,
     lookup_video_date,
     TrackMetadata,
 )
+
+
+class TestAlbumIsSelfTitledSingle:
+    def test_exact_match(self):
+        assert album_is_self_titled_single("BOMBA", "BOMBA") is True
+
+    def test_case_insensitive(self):
+        assert album_is_self_titled_single("bomba", "BOMBA") is True
+        assert album_is_self_titled_single("BOMBA", "bomba") is True
+
+    def test_whitespace_tolerant(self):
+        assert album_is_self_titled_single("  BOMBA  ", "BOMBA") is True
+
+    def test_different_strings(self):
+        assert album_is_self_titled_single("WHY ALWAYS ME?", "BOMBA") is False
+
+    def test_empty_album(self):
+        assert album_is_self_titled_single("", "BOMBA") is False
+
+    def test_empty_title(self):
+        assert album_is_self_titled_single("BOMBA", "") is False
+
+    def test_both_empty(self):
+        assert album_is_self_titled_single("", "") is False
+
+    def test_none_safe(self):
+        # Defensive — callers should pass strings but the helper shouldn't
+        # blow up on legacy None values from older code paths.
+        assert album_is_self_titled_single(None, "X") is False
+        assert album_is_self_titled_single("X", None) is False
 
 
 class TestLookupTrack:
@@ -117,7 +148,12 @@ class TestLookupAlbumIndex:
             {"tracks": [{"title": "Track C"}]},
         ]
         index = lookup_album_index("UC123")
-        assert index == {"track a": "Album One", "track b": "Album One", "track c": "Album Two"}
+        assert index.album_for("Track A") == "Album One"
+        assert index.album_for("track b") == "Album One"
+        assert index.album_for("Track C") == "Album Two"
+        # Album One has 2 tracks, Album Two has 1.
+        assert index.is_single("Album One") is False
+        assert index.is_single("Album Two") is True
 
     @patch("yt_song_to_instrumental.music_metadata._get_client")
     def test_first_album_wins_on_title_collision(self, mock_client):
@@ -133,15 +169,48 @@ class TestLookupAlbumIndex:
             {"tracks": [{"title": "Shared"}]},
         ]
         # Deluxe is listed first, so it wins. Documented behaviour.
-        assert lookup_album_index("UC123")["shared"] == "Deluxe"
+        assert lookup_album_index("UC123").album_for("shared") == "Deluxe"
 
     def test_empty_channel_id_returns_empty(self):
-        assert lookup_album_index("") == {}
+        index = lookup_album_index("")
+        assert index.album_for("anything") == ""
+        assert index.is_single("anything") is False
 
     @patch("yt_song_to_instrumental.music_metadata._get_client")
     def test_artist_lookup_failure_returns_empty(self, mock_client):
         mock_client.return_value.get_artist.side_effect = Exception("boom")
-        assert lookup_album_index("UC123") == {}
+        assert lookup_album_index("UC123").album_for("anything") == ""
+
+    @patch("yt_song_to_instrumental.music_metadata._get_client")
+    def test_is_single_false_for_unknown_album(self, mock_client):
+        client = mock_client.return_value
+        client.get_artist.return_value = {
+            "albums": {"results": [{"title": "Real Album", "browseId": "MPRE_r"}]},
+        }
+        client.get_album.side_effect = [{"tracks": [{"title": "A"}, {"title": "B"}]}]
+        index = lookup_album_index("UC123")
+        # An album the index never saw is not assumed to be a single.
+        assert index.is_single("Some Unknown Album") is False
+
+    def test_is_single_true_when_album_name_equals_track_title(self):
+        # YTMusic files a true single as an "album" named after the song —
+        # and singles aren't in the artist's albums section. Name-match
+        # catches it with zero extra API cost.
+        from yt_song_to_instrumental.music_metadata import AlbumIndex
+        index = AlbumIndex({}, {})
+        assert index.is_single("BOMBA", "BOMBA") is True
+        assert index.is_single("bomba", "BOMBA") is True  # case-insensitive
+
+    def test_is_single_false_when_album_differs_from_title(self):
+        from yt_song_to_instrumental.music_metadata import AlbumIndex
+        index = AlbumIndex({}, {})
+        assert index.is_single("Some Album", "Track Name") is False
+
+    def test_is_single_false_when_album_empty(self):
+        from yt_song_to_instrumental.music_metadata import AlbumIndex
+        index = AlbumIndex({}, {})
+        # No album at all → not a single (there's no album playlist to suppress).
+        assert index.is_single("", "Track Name") is False
 
 
 class TestResolveMetadata:

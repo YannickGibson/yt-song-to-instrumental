@@ -8,15 +8,30 @@ from yt_song_to_instrumental.metadata import (
     render_title,
     render_video_title,
     strip_title_parentheticals,
+    strip_topic_suffix,
     validate_template_tags,
     version_priority,
     _sanitize_for_hashtag,
     _sanitize_text,
 )
+
 from yt_song_to_instrumental.constants import YOUTUBE_TITLE_MAX_LENGTH
 
 
+class TestStripTopicSuffix:
+    def test_strips_topic_variants(self):
+        assert strip_topic_suffix("rexv2 - Topic") == "rexv2"
+        assert strip_topic_suffix("rexv2 – Topic") == "rexv2"
+        assert strip_topic_suffix("rexv2 — Topic") == "rexv2"
+        assert strip_topic_suffix("rexv2 - topic") == "rexv2"
+
+    def test_leaves_normal_artist_intact(self):
+        assert strip_topic_suffix("rexv2") == "rexv2"
+        assert strip_topic_suffix("") == ""
+
+
 class TestStripTitleParentheticals:
+
     def test_strips_official_audio(self):
         assert strip_title_parentheticals("Catastrophe (Official Audio)") == "Catastrophe"
 
@@ -125,8 +140,6 @@ class TestRenderDescription:
         assert "#rikuvex" in result.lower()
 
     def test_video_title_tag_substituted(self):
-        # Description that delegates the first line to <video-title> so it
-        # mirrors the rendered upload title exactly.
         template = "<video-title>\n\nOriginal: <original-url>"
         result = render_description(
             template,
@@ -138,6 +151,73 @@ class TestRenderDescription:
         assert result.startswith("Nyte Vandal & @hollowcair - the cipher (Instrumental)")
         # The raw artist/track combo must NOT also appear duplicated.
         assert "Nyte Vandal — Nyte Vandal" not in result
+
+    def test_full_video_url_tag_substituted(self):
+        template = "Full video: <full-video-url>\n<video-title>"
+        result = render_description(
+            template,
+            video_title="Artist — Track (Instrumental)",
+            full_video_url="https://youtube.com/watch?v=full_vid_123",
+        )
+        assert "https://youtube.com/watch?v=full_vid_123" in result
+        assert "Artist — Track (Instrumental)" in result
+
+
+class TestRenderShortTitle:
+    def test_extracts_song_name_from_full_instrumental_title(self):
+        from yt_song_to_instrumental.metadata import render_short_title
+
+        title = "Ken Carson — Yale (Instrumental)"
+        assert render_short_title(title) == "Yale (Instrumental)"
+
+    def test_extracts_song_name_when_no_instrumental_in_title(self):
+        from yt_song_to_instrumental.metadata import render_short_title
+
+        title = "Ken Carson — Yale"
+        assert render_short_title(title) == "Yale (Instrumental)"
+
+    def test_case_insensitive_instrumental(self):
+        from yt_song_to_instrumental.metadata import render_short_title
+
+        title = "vax — I cannot (instrumental)"
+        assert render_short_title(title) == "I cannot (Instrumental)"
+
+    def test_strips_featured_artists(self):
+        from yt_song_to_instrumental.metadata import render_short_title
+
+        title = "Nyte Vandal — Past Curfew (feat. Plastic Vow & Hollow Cair) (Instrumental)"
+        assert render_short_title(title) == "Past Curfew (Instrumental)"
+
+    def test_strips_multi_artist_headers(self):
+        from yt_song_to_instrumental.metadata import render_short_title
+
+        title = "Nyte Vandal & @hollowcair - the cipher (Instrumental)"
+        assert render_short_title(title) == "the cipher (Instrumental)"
+
+    def test_strips_unparenthesized_features(self):
+        from yt_song_to_instrumental.metadata import render_short_title
+
+        title = "Nocturne ft. Hollow Cair (Official Music Video)"
+        assert render_short_title(title) == "Nocturne (Instrumental)"
+
+    def test_strips_topic_channel_prefix(self):
+        from yt_song_to_instrumental.metadata import render_short_title
+
+        title = "rexv2 - Topic — Heads Turn"
+        assert render_short_title(title) == "Heads Turn (Instrumental)"
+
+    def test_preserves_solo_song_title(self):
+        from yt_song_to_instrumental.metadata import render_short_title
+
+        title = "velvetine (Instrumental)"
+        assert render_short_title(title) == "velvetine (Instrumental)"
+
+    def test_strips_teaser_suffix_if_present(self):
+        from yt_song_to_instrumental.metadata import render_short_title
+
+        title = "Ken Carson — Yale (Instrumental Teaser)"
+        assert render_short_title(title) == "Yale (Instrumental)"
+
 
 
 class TestVersionPriority:
@@ -210,7 +290,20 @@ class TestRenderVideoTitle:
         )
         assert result == "Nyte Vandal — Past Curfew (feat. Plastic Vow & Hollow Cair) (Instrumental)"
 
+    def test_topic_channel_suffix_stripped_from_title(self):
+        result = render_video_title(
+            _TPL,
+            primary_artist="rexv2",
+            raw_title="rexv2 - Topic — Heads Turn",
+            all_artists=["rexv2 - Topic", "rexv2"],
+            album_name="", model_name="HTDemucs", label_name="L",
+            aliases=_aliases(["rexv2"]),
+        )
+        assert result == "rexv2 — Heads Turn (Instrumental)"
+
+
     def test_alias_prefix_stripped(self):
+
         result = render_video_title(
             _TPL,
             primary_artist="Nyte Vandal",
@@ -246,7 +339,32 @@ class TestRenderVideoTitle:
         )
         assert result == "Nyte Vandal & @hollowcair - the cipher (Instrumental)"
 
+    def test_preserve_original_video_title_omits_primary_artist_prefix(self):
+        result = render_video_title(
+            _TPL,
+            primary_artist="BAFK",
+            raw_title="Nettspend - FOrever prod ok",
+            all_artists=["BAFK"],
+            album_name="", model_name="HTDemucs", label_name="L",
+            aliases=_aliases(),
+            preserve_original_video_title=True,
+        )
+        assert result == "Nettspend - FOrever prod ok (Instrumental)"
+
+    def test_is_uploader_backward_compatibility(self):
+        result = render_video_title(
+            _TPL,
+            primary_artist="BAFK",
+            raw_title="Nettspend - FOrever prod ok",
+            all_artists=["BAFK"],
+            album_name="", model_name="HTDemucs", label_name="L",
+            aliases=_aliases(),
+            is_uploader=True,
+        )
+        assert result == "Nettspend - FOrever prod ok (Instrumental)"
+
     def test_unrecognized_prefix_uses_template_unchanged(self):
+
         # LHS "Some Other" is not a primary variant and not multi-artist; treat
         # the whole title as the track name.
         result = render_video_title(
