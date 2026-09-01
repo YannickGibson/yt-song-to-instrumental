@@ -296,6 +296,33 @@ class TestAssignToPlaylists:
         assert db.get_playlist("album", "Riku Vex", "DRIFTWOOD") is None
         assert service.playlistItems().insert.call_count == 2
 
+    def test_skips_album_playlist_when_track_has_feature_and_album_is_single(self):
+        db = HistoryDB(db_path=":memory:")
+        config = _make_label_config()
+        service = _make_mock_service("PL_new")
+
+        assign_to_playlists(
+            service, db, config, "yt_vid_123", "Riku Vex", "Driftwood",
+            primary_artist="Riku Vex", track_title="Driftwood (feat. Guest Artist)",
+        )
+
+        assert db.get_playlist("album", "Riku Vex", "Driftwood") is None
+        assert service.playlistItems().insert.call_count == 2
+
+    def test_skips_album_playlist_when_create_album_playlists_false(self):
+        db = HistoryDB(db_path=":memory:")
+        config = _make_label_config()
+        service = _make_mock_service("PL_new")
+
+        assign_to_playlists(
+            service, db, config, "yt_vid_123", "Riku Vex", "Quiet Hours",
+            primary_artist="Riku Vex", track_title="Driftwood",
+            create_album_playlists=False,
+        )
+
+        assert db.get_playlist("album", "Riku Vex", "Quiet Hours") is None
+        assert service.playlistItems().insert.call_count == 2
+
     def test_keeps_album_playlist_when_album_differs_from_title(self):
         db = HistoryDB(db_path=":memory:")
         config = _make_label_config()
@@ -309,6 +336,7 @@ class TestAssignToPlaylists:
         assert db.get_playlist("album", "Riku Vex", "Quiet Hours") is not None
         # 3 inserts: channel + artist + album.
         assert service.playlistItems().insert.call_count == 3
+
 
     def test_alias_deduplicates_primary_and_collaborator(self):
         db = HistoryDB(db_path=":memory:")

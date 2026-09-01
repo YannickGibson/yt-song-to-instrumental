@@ -80,6 +80,15 @@ class TestSourceParsing:
         with pytest.raises(ValueError, match="source tab"):
             _parse_source({"url": "https://yt.com/c", "after_date": None, "tab": "invalid"})
 
+    def test_create_album_playlists_default_true(self):
+        s = _parse_source({"url": "https://yt.com/c", "after_date": None})
+        assert s.create_album_playlists is True
+
+    def test_create_album_playlists_false(self):
+        s = _parse_source({"url": "https://yt.com/c", "after_date": None, "create_album_playlists": False})
+        assert s.create_album_playlists is False
+
+
 
 class TestLabelConfigTemplateValidation:
     def test_unsupported_tag_in_video_title_raises_at_load_time(self):

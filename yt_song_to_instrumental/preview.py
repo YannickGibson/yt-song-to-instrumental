@@ -67,6 +67,7 @@ def preview_url(
     preserve_original_video_title: bool = False,
     is_uploader: bool = False,
     tab: str = "videos",
+    create_album_playlists: bool = True,
 ) -> PreviewReport:
     report = PreviewReport(source_url=url, after_date=after_date)
     model_display = MODEL_DISPLAY_NAMES.get(model_name, model_name)
@@ -113,7 +114,7 @@ def preview_url(
 
         album = meta["album"] or album_index.album_for(meta["title"])
         # Single-track "albums" are singles — drop them so no album playlist forms.
-        meta["album"] = "" if album_index.is_single(album, meta["title"]) else album
+        meta["album"] = "" if (not create_album_playlists or album_index.is_single(album, meta["title"])) else album
 
         raw_primary = (
             entry.get("_source_channel")
@@ -125,6 +126,7 @@ def preview_url(
         primary_artist = label_config.artist_aliases.resolve(strip_topic_suffix(raw_primary))
         artist_playlists, album_playlist = project_playlist_names(
             label_config, meta["artist"], meta["album"], meta["title"], primary_artist,
+            create_album_playlists=create_album_playlists,
         )
         projected_video_title = render_video_title(
             label_config.video_title_template,

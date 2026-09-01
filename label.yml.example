@@ -82,8 +82,9 @@ trim_silence: true
 tab: videos
 
 # Source channels to scan. Each entry: a YouTube or YouTube Music channel URL,
-# an after_date (YYYYMMDD), an optional tab ("videos" or "releases"), and optionally
-# preserve_original_video_title: true to preserve the raw video title.
+# an after_date (YYYYMMDD), an optional tab ("videos" or "releases"), optionally
+# preserve_original_video_title: true to preserve the raw video title, and optionally
+# create_album_playlists: false to disable album playlist creation (defaults to true).
 sources:
   - url: "https://music.youtube.com/@artist1"  # also works: https://youtube.com/@artist1
     after_date: "20260101"
@@ -91,6 +92,7 @@ sources:
   - url: "https://youtube.com/@aggregator_channel"
     after_date: "20260315"
     preserve_original_video_title: true
+    create_album_playlists: false
 
 
 # Artist alias groups — names that refer to the same artist.

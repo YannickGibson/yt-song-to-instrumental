@@ -46,6 +46,7 @@ class Source:
     after_date: str | None
     preserve_original_video_title: bool = False
     tab: str = "videos"
+    create_album_playlists: bool = True
 
 
 def _parse_source(raw: dict, default_tab: str = "videos") -> Source:
@@ -70,11 +71,15 @@ def _parse_source(raw: dict, default_tab: str = "videos") -> Source:
     else:
         tab = raw_tab.strip().lower()
 
+    raw_create_album_pl = raw.get("create_album_playlists")
+    create_album_playlists = bool(raw_create_album_pl) if raw_create_album_pl is not None else True
+
     return Source(
         url=url,
         after_date=after_date,
         preserve_original_video_title=preserve_original_video_title,
         tab=tab,
+        create_album_playlists=create_album_playlists,
     )
 
 

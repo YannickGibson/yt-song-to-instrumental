@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import dataclass
 
 from ytmusicapi import YTMusic
@@ -6,6 +7,11 @@ from ytmusicapi import YTMusic
 logger = logging.getLogger(__name__)
 
 _ytmusic: YTMusic | None = None
+
+_SINGLE_NOISE_PARENS_RE = re.compile(r"\s*\([^)]*\)\s*")
+_UNPAREN_FEAT_RE = re.compile(r"^(.+?)\s+(?:ft|feat)\.?\s+(.+)$", re.IGNORECASE)
+_DASH_SPLIT_RE = re.compile(r"\s+[\-–—]\s+")
+_SINGLE_SUFFIX_RE = re.compile(r"\s*[\-–—]\s*(?:single|ep|speed|demo|sped\s+up|slowed)\s*$", re.IGNORECASE)
 
 
 def _get_client() -> YTMusic:
@@ -37,31 +43,47 @@ class AlbumIndex:
         """True when the album is a single-track release. Two signals:
 
         1. The album appears in this index with track count <= 1.
-        2. The album name equals the track title (see album_is_self_titled_single).
+        2. The album name corresponds to the track title (see album_is_self_titled_single).
         """
         album_key = (album_name or "").strip().lower()
         size = self.album_sizes.get(album_key)
-        if size is not None and size <= 1:
-            return True
+        if size is not None:
+            return size <= 1
         return album_is_self_titled_single(album_name, track_title)
 
 
+def _normalize_title_or_album(text: str) -> str:
+    if not text:
+        return ""
+    t = text.strip()
+    # Strip parentheticals like (feat. X), (Solo), (Demo Speed), (Sped Up), etc.
+    t = _SINGLE_NOISE_PARENS_RE.sub(" ", t).strip()
+    # Strip unparenthesized features: "Song ft. X" -> "Song"
+    m = _UNPAREN_FEAT_RE.match(t)
+    if m:
+        t = m.group(1).strip()
+    # Strip trailing " - Single", " - EP", etc.
+    t = _SINGLE_SUFFIX_RE.sub("", t).strip()
+    # If there is an artist delimiter dash (e.g. "Artist - Song"), use the song name
+    parts = _DASH_SPLIT_RE.split(t)
+    if len(parts) == 2:
+        t = parts[1].strip()
+    return re.sub(r"[^a-zA-Z0-9]", "", t).lower()
+
+
 def album_is_self_titled_single(album_name: str, track_title: str) -> bool:
-    """True when the album name equals the track title — YTMusic files a true
-    single as an 'album' named after the song, and singles live in the artist's
-    'singles' section (not 'albums'), so they don't appear in the AlbumIndex.
-    The name match catches them with zero extra API cost.
+    """True when the album name corresponds to the single track title (accounting
+    for feature credits, parenthetical tags like '(feat. X)', '(Solo)',
+    '(Demo Speed)', and trailing suffixes like '- Single').
 
     Used both by AlbumIndex.is_single (preview path) and assign_to_playlists
     (upload path) to suppress an album-playlist creation for singles.
-
-    Trade-off: a legitimate multi-track album with a self-titled track loses
-    just that one track from its album playlist. Rare and cosmetic. Worth it
-    to avoid mass single playlists.
     """
-    album_key = (album_name or "").strip().lower()
-    title_key = (track_title or "").strip().lower()
-    return bool(album_key) and album_key == title_key
+    if not album_name or not track_title:
+        return False
+    norm_album = _normalize_title_or_album(album_name)
+    norm_track = _normalize_title_or_album(track_title)
+    return bool(norm_album) and norm_album == norm_track
 
 
 def lookup_album_index(channel_id: str) -> AlbumIndex:

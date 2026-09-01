@@ -296,6 +296,7 @@ def main() -> None:
                     model_name=effective_model,
                     preserve_original_video_title=args.preserve_original_video_title or src.preserve_original_video_title,
                     tab=src.tab,
+                    create_album_playlists=src.create_album_playlists,
                 )
                 _print_preview_report(report)
             return
@@ -327,6 +328,7 @@ def main() -> None:
                 preserve_original_video_title=args.preserve_original_video_title or src.preserve_original_video_title,
                 tab=src.tab,
                 shorts_only=args.shorts_only,
+                create_album_playlists=src.create_album_playlists,
             )
             _print_pipeline_report(report)
     finally:

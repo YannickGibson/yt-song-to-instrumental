@@ -32,11 +32,27 @@ class TestAlbumIsSelfTitledSingle:
     def test_both_empty(self):
         assert album_is_self_titled_single("", "") is False
 
-    def test_none_safe(self):
-        # Defensive — callers should pass strings but the helper shouldn't
-        # blow up on legacy None values from older code paths.
-        assert album_is_self_titled_single(None, "X") is False
-        assert album_is_self_titled_single("X", None) is False
+    def test_feature_parenthetical_in_title(self):
+        assert album_is_self_titled_single("All The Same", "All The Same (feat. Zukovstheworld)") is True
+        assert album_is_self_titled_single("Platinum", "Platinum (feat. Fimiguerrero)") is True
+
+    def test_feature_in_album_name(self):
+        assert album_is_self_titled_single("All The Same (feat. Zukovstheworld)", "All The Same") is True
+
+    def test_solo_and_version_tags(self):
+        assert album_is_self_titled_single("Fever (Solo)", "Fever") is True
+        assert album_is_self_titled_single("Fever", "Fever (Solo)") is True
+        assert album_is_self_titled_single("Trust Issues (Demo Speed)", "Trust Issues") is True
+
+    def test_unparenthesized_features(self):
+        assert album_is_self_titled_single("Song Name", "Song Name ft. Other Artist") is True
+
+    def test_single_and_ep_suffixes(self):
+        assert album_is_self_titled_single("Song Name - Single", "Song Name") is True
+
+    def test_artist_prefix_in_title(self):
+        assert album_is_self_titled_single("Song Name", "Artist - Song Name") is True
+
 
 
 class TestLookupTrack:

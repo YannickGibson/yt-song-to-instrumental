@@ -66,6 +66,7 @@ class _RunContext:
     trim_silence: bool
     trim_silence_threshold_db: float
     preserve_original_video_title: bool
+    create_album_playlists: bool = True
     trim_start_times: dict[str, float] = field(default_factory=dict)
     shorts_only: bool = False
 
@@ -90,6 +91,7 @@ def process_url(
     is_uploader: bool = False,
     tab: str = "videos",
     shorts_only: bool = False,
+    create_album_playlists: bool = True,
 ) -> PipelineReport:
     report = PipelineReport()
     model = model_name or config.separator_model
@@ -112,6 +114,7 @@ def process_url(
         trim_silence=trim_silence,
         trim_silence_threshold_db=label_config.trim_silence_threshold_db,
         preserve_original_video_title=preserve_original_video_title or is_uploader,
+        create_album_playlists=create_album_playlists,
         shorts_only=shorts_only,
     )
 
@@ -539,6 +542,7 @@ def _upload_track(
                 ctx.service, ctx.history, ctx.label_config, yt_video_id,
                 strip_topic_suffix(artist), album, primary_artist,
                 privacy=ctx.privacy, track_title=track.title,
+                create_album_playlists=ctx.create_album_playlists,
             )
 
         except Exception as e:

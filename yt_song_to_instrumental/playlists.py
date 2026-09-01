@@ -185,6 +185,7 @@ def project_playlist_names(
     album: str,
     track_title: str,
     primary_artist: str,
+    create_album_playlists: bool = True,
 ) -> tuple[list[str], str | None]:
     artist_names = project_playlist_artists(label_config, artist, track_title, primary_artist)
     artist_titles = [
@@ -196,7 +197,7 @@ def project_playlist_names(
         for name in artist_names
     ]
     album_title: str | None = None
-    if album:
+    if create_album_playlists and album and not album_is_self_titled_single(album, track_title):
         # Album playlist is credited to the primary (channel) artist, resolved
         # through aliases — matching the rendered video-title convention.
         album_artist = label_config.artist_aliases.resolve(primary_artist)
@@ -219,6 +220,7 @@ def assign_to_playlists(
     primary_artist: str,
     privacy: str = "public",
     track_title: str = "",
+    create_album_playlists: bool = True,
 ) -> None:
     # Every upload also goes into the single per-label "all uploads" playlist —
     # the chronological feed of everything this channel has published.
@@ -233,7 +235,7 @@ def assign_to_playlists(
         )
         add_video_to_playlist(service, artist_playlist_id, video_id)
 
-    if album and not album_is_self_titled_single(album, track_title):
+    if create_album_playlists and album and not album_is_self_titled_single(album, track_title):
         album_artist = label_config.artist_aliases.resolve(primary_artist)
         album_playlist_id = get_or_create_album_playlist(
             service, history, label_config, album_artist, album, privacy,
