@@ -329,6 +329,7 @@ def main() -> None:
                 tab=src.tab,
                 shorts_only=args.shorts_only,
                 create_album_playlists=src.create_album_playlists,
+                video_channel_url=src.video_channel_url,
             )
             _print_pipeline_report(report)
     finally:

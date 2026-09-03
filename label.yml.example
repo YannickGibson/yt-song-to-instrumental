@@ -83,12 +83,13 @@ tab: videos
 
 # Source channels to scan. Each entry: a YouTube or YouTube Music channel URL,
 # an after_date (YYYYMMDD), an optional tab ("videos" or "releases"), optionally
-# preserve_original_video_title: true to preserve the raw video title, and optionally
-# create_album_playlists: false to disable album playlist creation (defaults to true).
+# preserve_original_video_title: true to preserve the raw video title, optionally
+# create_album_playlists: false to disable album playlist creation (defaults to true),
+# and optionally video_channel_url to source official music videos for YouTube Shorts.
 sources:
-  - url: "https://music.youtube.com/@artist1"  # also works: https://youtube.com/@artist1
+  - url: "https://music.youtube.com/channel/UCH1C5-gc2yyK_Sw0VxqxKHA"  # artist releases / topic
+    video_channel_url: "https://www.youtube.com/@cochise"             # official music video channel
     after_date: "20260101"
-    tab: releases
   - url: "https://youtube.com/@aggregator_channel"
     after_date: "20260315"
     preserve_original_video_title: true

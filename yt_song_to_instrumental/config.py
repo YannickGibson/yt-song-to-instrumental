@@ -47,6 +47,7 @@ class Source:
     preserve_original_video_title: bool = False
     tab: str = "videos"
     create_album_playlists: bool = True
+    video_channel_url: str | None = None
 
 
 def _parse_source(raw: dict, default_tab: str = "videos") -> Source:
@@ -74,12 +75,23 @@ def _parse_source(raw: dict, default_tab: str = "videos") -> Source:
     raw_create_album_pl = raw.get("create_album_playlists")
     create_album_playlists = bool(raw_create_album_pl) if raw_create_album_pl is not None else True
 
+    raw_video_channel_url = raw.get("video_channel_url")
+    if raw_video_channel_url is not None:
+        if not isinstance(raw_video_channel_url, str) or not raw_video_channel_url.strip():
+            raise ValueError(
+                f"source video_channel_url must be a non-empty string or null, got {raw_video_channel_url!r} for url {url!r}"
+            )
+        video_channel_url = raw_video_channel_url.strip()
+    else:
+        video_channel_url = None
+
     return Source(
         url=url,
         after_date=after_date,
         preserve_original_video_title=preserve_original_video_title,
         tab=tab,
         create_album_playlists=create_album_playlists,
+        video_channel_url=video_channel_url,
     )
 
 

@@ -21,6 +21,7 @@ from yt_song_to_instrumental.separator.base import SeparatorBackend
 from yt_song_to_instrumental.thumbnail import get_thumbnail_for_track
 from yt_song_to_instrumental.uploader import upload_video
 from yt_song_to_instrumental.video_detector import detect_if_music_video
+from yt_song_to_instrumental.video_finder import find_and_verify_music_video
 from yt_song_to_instrumental.video_render import render_short_video, render_video
 from yt_song_to_instrumental.trimmer import detect_silence_threshold, trim_audio_file
 
@@ -67,6 +68,7 @@ class _RunContext:
     trim_silence_threshold_db: float
     preserve_original_video_title: bool
     create_album_playlists: bool = True
+    video_channel_url: str | None = None
     trim_start_times: dict[str, float] = field(default_factory=dict)
     shorts_only: bool = False
 
@@ -92,6 +94,7 @@ def process_url(
     tab: str = "videos",
     shorts_only: bool = False,
     create_album_playlists: bool = True,
+    video_channel_url: str | None = None,
 ) -> PipelineReport:
     report = PipelineReport()
     model = model_name or config.separator_model
@@ -115,6 +118,7 @@ def process_url(
         trim_silence_threshold_db=label_config.trim_silence_threshold_db,
         preserve_original_video_title=preserve_original_video_title or is_uploader,
         create_album_playlists=create_album_playlists,
+        video_channel_url=video_channel_url,
         shorts_only=shorts_only,
     )
 
@@ -331,14 +335,31 @@ def _upload_short_track(
         )
         if not is_music_vid:
             logger.info(
-                "Track %s detected as static / non-music-video (diff=%.2f); skipping Short",
+                "Track %s source video detected as static / non-music-video (diff=%.2f); searching YouTube for official music video...",
                 track.title,
                 motion_diff,
             )
-            ctx.history.record_short_status(
-                track.video_id, ctx.model, "skipped_not_music_video", is_music_video=False
+            track_dur = sep_record.duration_seconds if sep_record else None
+            alt_video, alt_motion = find_and_verify_music_video(
+                artist=artist,
+                track_title=track.title,
+                tmp_dir=ctx.tmp_dir,
+                expected_duration=track_dur,
+                start_time=start_time,
+                video_channel_url=ctx.video_channel_url,
             )
-            return
+            if alt_video:
+                source_video = alt_video
+                is_music_vid = True
+            else:
+                logger.info(
+                    "Track %s has no verified music video on YouTube; skipping Short",
+                    track.title,
+                )
+                ctx.history.record_short_status(
+                    track.video_id, ctx.model, "skipped_not_music_video", is_music_video=False
+                )
+                return
         else:
             logger.info("Track %s detected as music video (diff=%.2f)", track.title, motion_diff)
 
