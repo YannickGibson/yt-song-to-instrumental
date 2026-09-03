@@ -15,11 +15,10 @@ jobs:
         with:
           enable-cache: true
 
-      # The demucs extra is required because tests/test_separator.py imports the
-      # backend modules directly, and demucs_backend.py imports torch at module
-      # scope. Tests never run the model — only this import must resolve.
+      # The all-models extra is required because tests/test_separator.py imports the
+      # backend modules directly (demucs_backend imports torch, inst_hq_4_backend imports audio_separator/onnxruntime).
       - name: Install dependencies
-        run: uv sync --extra dev --extra demucs
+        run: uv sync --extra dev --extra all-models
 
       - name: Run tests
         run: uv run pytest
