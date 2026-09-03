@@ -331,7 +331,7 @@ def _upload_short_track(
     is_music_vid = None
     if ctx.label_config.upload_short_if_music_video:
         is_music_vid, motion_diff = detect_if_music_video(
-            source_video, start_time=start_time, duration=SHORT_DURATION_SECONDS
+            source_video, start_time=start_time, duration=SHORT_DURATION_SECONDS, video_title=track.title
         )
         if not is_music_vid:
             logger.info(

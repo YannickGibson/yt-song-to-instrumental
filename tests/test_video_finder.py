@@ -38,14 +38,16 @@ class TestSearchMusicVideoCandidates:
                 {"id": "v1", "title": "Artist - Song (Reaction!)", "duration": 180, "uploader": "Reactor"},
                 {"id": "v2", "title": "Artist - Song (Type Beat)", "duration": 180, "uploader": "Producer"},
                 {"id": "v3", "title": "Artist - Song (Guitar Cover)", "duration": 180, "uploader": "Guitarist"},
-                {"id": "v4", "title": "Artist - Song [Official Video]", "duration": 180, "uploader": "Artist"},
+                {"id": "v4", "title": "Artist - Song (Official Audio)", "duration": 180, "uploader": "Artist"},
+                {"id": "v5", "title": "Artist - Song [Visualizer]", "duration": 180, "uploader": "Artist"},
+                {"id": "v6", "title": "Artist - Song [Official Video]", "duration": 180, "uploader": "Artist"},
             ]
         }
 
         candidates = search_music_video_candidates("Artist", "Song", expected_duration=180.0)
 
         assert len(candidates) == 1
-        assert candidates[0]["id"] == "v4"
+        assert candidates[0]["id"] == "v6"
 
     @patch("yt_dlp.YoutubeDL")
     def test_filters_duration_mismatch(self, mock_ydl_cls):

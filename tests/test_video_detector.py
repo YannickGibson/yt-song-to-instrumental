@@ -57,3 +57,19 @@ def test_nonexistent_video(tmp_path):
     is_music_vid, diff = detect_if_music_video(tmp_path / "nonexistent.mp4")
     assert is_music_vid is False
     assert diff == 0.0
+
+
+def test_audio_indicator_in_title_skips(tmp_path):
+    video_path = tmp_path / "moving.mp4"
+    _create_synthetic_video(video_path, is_static=False, duration=6.0)
+
+    for title in (
+        "Artist - Song (Official Audio)",
+        "Artist - Song [Visualizer]",
+        "Artist - Song (Lyric Video)",
+        "Song (Audio)",
+    ):
+        is_mv, diff = detect_if_music_video(video_path, video_title=title)
+        assert is_mv is False
+        assert diff == 0.0
+

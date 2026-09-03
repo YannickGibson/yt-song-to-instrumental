@@ -1,4 +1,5 @@
 import logging
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -12,6 +13,11 @@ from yt_song_to_instrumental.constants import (
 
 logger = logging.getLogger(__name__)
 
+_AUDIO_INDICATOR_PATTERN = re.compile(
+    r"\b(?:official\s+)?(?:audio|visualizer|lyric\s+video|lyrics)\b",
+    re.IGNORECASE,
+)
+
 
 def detect_if_music_video(
     video_path: Path,
@@ -19,6 +25,7 @@ def detect_if_music_video(
     duration: float = SHORT_DURATION_SECONDS,
     min_motion_threshold: float = SHORT_DEFAULT_MOTION_THRESHOLD,
     sample_fps: float = 0.5,
+    video_title: str = "",
 ) -> tuple[bool, float]:
     """Detect whether a video is an active music video (moving content)
     vs a static image / simple visualizer.
@@ -30,6 +37,13 @@ def detect_if_music_video(
     Returns:
         tuple[bool, float]: (is_music_video, average_consecutive_motion_diff)
     """
+    if video_title and _AUDIO_INDICATOR_PATTERN.search(video_title):
+        logger.info(
+            "Video title '%s' contains audio/visualizer/lyric indicator; classifying as non-music video",
+            video_title,
+        )
+        return False, 0.0
+
     if not video_path.exists():
         logger.error("Video file not found for detection: %s", video_path)
         return False, 0.0

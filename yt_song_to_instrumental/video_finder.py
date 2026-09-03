@@ -11,6 +11,12 @@ from yt_song_to_instrumental.video_detector import detect_if_music_video
 logger = logging.getLogger(__name__)
 
 _NEGATIVE_KEYWORDS = (
+    "audio",
+    "official audio",
+    "visualizer",
+    "official visualizer",
+    "lyric video",
+    "lyrics",
     "reaction",
     "reacting",
     "review",
