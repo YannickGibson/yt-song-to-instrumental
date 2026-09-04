@@ -88,7 +88,7 @@ tab: videos
 # and optionally video_channel_url to source official music videos for YouTube Shorts.
 sources:
   - url: "https://music.youtube.com/channel/UCH1C5-gc2yyK_Sw0VxqxKHA"  # artist releases / topic
-    video_channel_url: "https://www.youtube.com/@cochise"             # official music video channel
+    video_channel_url: "https://www.youtube.com/@sample-source-5"             # official music video channel
     after_date: "20260101"
   - url: "https://youtube.com/@aggregator_channel"
     after_date: "20260315"

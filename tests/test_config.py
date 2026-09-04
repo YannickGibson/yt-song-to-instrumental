@@ -89,8 +89,8 @@ class TestSourceParsing:
         assert s.create_album_playlists is False
 
     def test_video_channel_url_valid(self):
-        s = _parse_source({"url": "https://yt.com/c", "after_date": None, "video_channel_url": "https://yt.com/@cochise"})
-        assert s.video_channel_url == "https://yt.com/@cochise"
+        s = _parse_source({"url": "https://yt.com/c", "after_date": None, "video_channel_url": "https://yt.com/@sample-artist"})
+        assert s.video_channel_url == "https://yt.com/@sample-artist"
 
     def test_video_channel_url_empty_raises(self):
         with pytest.raises(ValueError, match="video_channel_url"):
@@ -252,5 +252,4 @@ class TestLabelConfigShorts:
         })
         with pytest.raises(ValueError, match="templates.short_description"):
             LabelConfig(data)
-
 

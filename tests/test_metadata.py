@@ -20,13 +20,13 @@ from yt_song_to_instrumental.constants import YOUTUBE_TITLE_MAX_LENGTH
 
 class TestStripTopicSuffix:
     def test_strips_topic_variants(self):
-        assert strip_topic_suffix("rexv2 - Topic") == "rexv2"
-        assert strip_topic_suffix("rexv2 – Topic") == "rexv2"
-        assert strip_topic_suffix("rexv2 — Topic") == "rexv2"
-        assert strip_topic_suffix("rexv2 - topic") == "rexv2"
+        assert strip_topic_suffix("Sample Artist 19 - Topic") == "Sample Artist 19"
+        assert strip_topic_suffix("Sample Artist 19 – Topic") == "Sample Artist 19"
+        assert strip_topic_suffix("Sample Artist 19 — Topic") == "Sample Artist 19"
+        assert strip_topic_suffix("Sample Artist 19 - topic") == "Sample Artist 19"
 
     def test_leaves_normal_artist_intact(self):
-        assert strip_topic_suffix("rexv2") == "rexv2"
+        assert strip_topic_suffix("Sample Artist 19") == "Sample Artist 19"
         assert strip_topic_suffix("") == ""
 
 
@@ -167,13 +167,13 @@ class TestRenderShortTitle:
     def test_extracts_song_name_from_full_instrumental_title(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
-        title = "Ken Carson — Yale (Instrumental)"
+        title = "Sample Artist 1 — Yale (Instrumental)"
         assert render_short_title(title) == "Yale (Instrumental)"
 
     def test_extracts_song_name_when_no_instrumental_in_title(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
-        title = "Ken Carson — Yale"
+        title = "Sample Artist 1 — Yale"
         assert render_short_title(title) == "Yale (Instrumental)"
 
     def test_case_insensitive_instrumental(self):
@@ -203,7 +203,7 @@ class TestRenderShortTitle:
     def test_strips_topic_channel_prefix(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
-        title = "rexv2 - Topic — Heads Turn"
+        title = "Sample Artist 19 - Topic — Heads Turn"
         assert render_short_title(title) == "Heads Turn (Instrumental)"
 
     def test_preserves_solo_song_title(self):
@@ -215,7 +215,7 @@ class TestRenderShortTitle:
     def test_strips_teaser_suffix_if_present(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
-        title = "Ken Carson — Yale (Instrumental Teaser)"
+        title = "Sample Artist 1 — Yale (Instrumental Teaser)"
         assert render_short_title(title) == "Yale (Instrumental)"
 
 
@@ -293,13 +293,13 @@ class TestRenderVideoTitle:
     def test_topic_channel_suffix_stripped_from_title(self):
         result = render_video_title(
             _TPL,
-            primary_artist="rexv2",
-            raw_title="rexv2 - Topic — Heads Turn",
-            all_artists=["rexv2 - Topic", "rexv2"],
+            primary_artist="Sample Artist 19",
+            raw_title="Sample Artist 19 - Topic — Heads Turn",
+            all_artists=["Sample Artist 19 - Topic", "Sample Artist 19"],
             album_name="", model_name="HTDemucs", label_name="L",
-            aliases=_aliases(["rexv2"]),
+            aliases=_aliases(["Sample Artist 19"]),
         )
-        assert result == "rexv2 — Heads Turn (Instrumental)"
+        assert result == "Sample Artist 19 — Heads Turn (Instrumental)"
 
 
     def test_alias_prefix_stripped(self):
@@ -342,26 +342,26 @@ class TestRenderVideoTitle:
     def test_preserve_original_video_title_omits_primary_artist_prefix(self):
         result = render_video_title(
             _TPL,
-            primary_artist="BAFK",
-            raw_title="Nettspend - FOrever prod ok",
-            all_artists=["BAFK"],
+            primary_artist="Sample Artist 12",
+            raw_title="Sample Artist 13 - FOrever prod ok",
+            all_artists=["Sample Artist 12"],
             album_name="", model_name="HTDemucs", label_name="L",
             aliases=_aliases(),
             preserve_original_video_title=True,
         )
-        assert result == "Nettspend - FOrever prod ok (Instrumental)"
+        assert result == "Sample Artist 13 - FOrever prod ok (Instrumental)"
 
     def test_is_uploader_backward_compatibility(self):
         result = render_video_title(
             _TPL,
-            primary_artist="BAFK",
-            raw_title="Nettspend - FOrever prod ok",
-            all_artists=["BAFK"],
+            primary_artist="Sample Artist 12",
+            raw_title="Sample Artist 13 - FOrever prod ok",
+            all_artists=["Sample Artist 12"],
             album_name="", model_name="HTDemucs", label_name="L",
             aliases=_aliases(),
             is_uploader=True,
         )
-        assert result == "Nettspend - FOrever prod ok (Instrumental)"
+        assert result == "Sample Artist 13 - FOrever prod ok (Instrumental)"
 
     def test_unrecognized_prefix_uses_template_unchanged(self):
 

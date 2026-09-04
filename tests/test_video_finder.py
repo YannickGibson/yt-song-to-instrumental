@@ -14,13 +14,13 @@ class TestSearchChannelCandidates:
     @patch("yt_song_to_instrumental.video_finder.get_channel_videos")
     def test_finds_official_music_video_on_channel(self, mock_get_channel):
         mock_get_channel.return_value = [
-            {"id": "v1", "title": "Cochise - Tell Em (Audio)", "duration": 181},
-            {"id": "v2", "title": "Cochise - SANJI (Official Video)", "duration": 148},
-            {"id": "v3", "title": "Cochise - POCKET ROCKET (Official Video)", "duration": 133},
+            {"id": "v1", "title": "Sample Artist 9 - Tell Em (Audio)", "duration": 181},
+            {"id": "v2", "title": "Sample Artist 9 - SANJI (Official Video)", "duration": 148},
+            {"id": "v3", "title": "Sample Artist 9 - POCKET ROCKET (Official Video)", "duration": 133},
         ]
 
         candidates = search_channel_candidates(
-            "https://youtube.com/@cochise", "SANJI", expected_duration=150.0
+            "https://youtube.com/@sample-artist", "SANJI", expected_duration=150.0
         )
 
         assert len(candidates) == 1
@@ -88,14 +88,14 @@ class TestFindAndVerifyMusicVideo:
     @patch("yt_song_to_instrumental.video_finder.download_source_video")
     @patch("yt_song_to_instrumental.video_finder.search_channel_candidates")
     def test_successful_channel_verification(self, mock_channel_search, mock_download, mock_detect, tmp_path):
-        mock_channel_search.return_value = [{"id": "mv123", "title": "Cochise - SANJI (Official Video)"}]
+        mock_channel_search.return_value = [{"id": "mv123", "title": "Sample Artist 9 - SANJI (Official Video)"}]
         mock_file = tmp_path / "video_mv123.mp4"
         mock_file.touch()
         mock_download.return_value = mock_file
         mock_detect.return_value = (True, 15.4)
 
         result_path, diff = find_and_verify_music_video(
-            "Cochise", "SANJI", tmp_path, expected_duration=148.0, video_channel_url="https://youtube.com/@cochise"
+            "Sample Artist 9", "SANJI", tmp_path, expected_duration=148.0, video_channel_url="https://youtube.com/@sample-artist"
         )
 
         assert result_path == mock_file

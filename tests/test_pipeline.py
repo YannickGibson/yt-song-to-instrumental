@@ -128,11 +128,11 @@ class TestSingleVideoTargeting:
         assert _is_single_video_url("https://www.youtube.com/watch?v=RMzb9uyK8Q8") is True
         assert _is_single_video_url("https://youtu.be/RMzb9uyK8Q8") is True
         assert _is_single_video_url("https://music.youtube.com/watch?v=RMzb9uyK8Q8") is True
-        assert _is_single_video_url("https://youtube.com/@bktherula") is False
+        assert _is_single_video_url("https://www.youtube.com/@sample-source-16") is False
 
         assert _extract_target_video_ids("https://www.youtube.com/watch?v=RMzb9uyK8Q8") == {"RMzb9uyK8Q8"}
         assert _extract_target_video_ids("https://youtu.be/RMzb9uyK8Q8") == {"RMzb9uyK8Q8"}
-        assert _extract_target_video_ids("https://youtube.com/@bktherula") is None
+        assert _extract_target_video_ids("https://www.youtube.com/@sample-source-16") is None
 
     @patch("yt_song_to_instrumental.pipeline.download_tracks")
     @patch("yt_song_to_instrumental.pipeline.get_separator")
