@@ -15,6 +15,11 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
       # The all-models extra is required because tests/test_separator.py imports the
       # backend modules directly (demucs_backend imports torch, inst_hq_4_backend imports audio_separator/onnxruntime).
       - name: Install dependencies
