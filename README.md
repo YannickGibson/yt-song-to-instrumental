@@ -107,6 +107,30 @@ uv run yt-instrumental https://youtube.com/playlist?list=PLAYLIST_ID
 uv run yt-instrumental https://youtube.com/@ChannelName
 ```
 
+### Priority instrumental requests
+
+Queue a requested song ahead of normally discovered tracks without starting a
+second pipeline process:
+
+```bash
+uv run yt-instrumental --enqueue-priority "https://www.youtube.com/watch?v=VIDEO_ID"
+uv run yt-instrumental --list-priority
+```
+
+The queue is stored in `data/history.db`. The newest request is position one.
+The managed worker checks the queue before each normal track, finishes any track
+already in progress, and then drains requested songs newest-first. Each request
+uses the same download, separation, upload, playlist, and history code as a
+normal source item.
+
+Python callers can use the same enqueue operation directly:
+
+```python
+from yt_song_to_instrumental.priority import enqueue_priority_request
+
+request = enqueue_priority_request("https://www.youtube.com/watch?v=VIDEO_ID")
+```
+
 ### Common options
 
 ```bash

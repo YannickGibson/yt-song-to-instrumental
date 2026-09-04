@@ -1,3 +1,9 @@
+from yt_song_to_instrumental.constants import (
+    PRIORITY_STATUS_COMPLETED,
+    PRIORITY_STATUS_FAILED,
+    PRIORITY_STATUS_PENDING,
+    PRIORITY_STATUS_PROCESSING,
+)
 from yt_song_to_instrumental.history import HistoryDB
 
 
@@ -184,3 +190,64 @@ class TestPlaylists:
         db.record_playlist("album", "Riku Vex", "Quiet Hours", "PLalbum")
         assert db.get_playlist("artist", "Riku Vex").youtube_playlist_id == "PLartist"
         assert db.get_playlist("album", "Riku Vex", "Quiet Hours").youtube_playlist_id == "PLalbum"
+
+
+class TestPriorityRequests:
+    def test_newest_request_is_claimed_first(self):
+        db = make_db()
+        timestamps = iter(("2026-09-05T00:00:00+00:00", "2026-09-05T00:00:01+00:00", "2026-09-05T00:00:02+00:00"))
+        db._now = lambda: next(timestamps)
+
+        first = db.enqueue_priority_request("https://youtube.com/watch?v=QueueItem01")
+        second = db.enqueue_priority_request("https://youtube.com/watch?v=QueueItem02")
+
+        claimed = db.claim_next_priority_request()
+        assert claimed is not None
+        assert claimed.id == second.id
+        assert claimed.status == PRIORITY_STATUS_PROCESSING
+        assert first.status == PRIORITY_STATUS_PENDING
+
+    def test_reenqueue_pending_request_moves_it_to_front(self):
+        db = make_db()
+        timestamps = iter((
+            "2026-09-05T00:00:00+00:00",
+            "2026-09-05T00:00:01+00:00",
+            "2026-09-05T00:00:02+00:00",
+            "2026-09-05T00:00:03+00:00",
+        ))
+        db._now = lambda: next(timestamps)
+
+        first = db.enqueue_priority_request("https://youtube.com/watch?v=QueueItem01")
+        db.enqueue_priority_request("https://youtube.com/watch?v=QueueItem02")
+        reprioritized = db.enqueue_priority_request(first.url)
+
+        claimed = db.claim_next_priority_request()
+        assert claimed is not None
+        assert claimed.id == first.id
+        assert reprioritized.id == first.id
+
+    def test_complete_and_fail_requests(self):
+        db = make_db()
+        completed = db.enqueue_priority_request("https://youtube.com/watch?v=QueueItem01")
+        db.complete_priority_request(completed.id)
+
+        failed = db.enqueue_priority_request("https://youtube.com/watch?v=QueueItem02")
+        db.fail_priority_request(failed.id, "simulated failure")
+
+        requests = {request.id: request for request in db.list_priority_requests()}
+        assert requests[completed.id].status == PRIORITY_STATUS_COMPLETED
+        assert requests[failed.id].status == PRIORITY_STATUS_FAILED
+        assert requests[failed.id].error == "simulated failure"
+
+    def test_requeues_request_left_processing_by_previous_worker(self):
+        db = make_db()
+        request = db.enqueue_priority_request("https://youtube.com/watch?v=QueueItem01")
+        claimed = db.claim_next_priority_request()
+        assert claimed is not None
+        assert claimed.status == PRIORITY_STATUS_PROCESSING
+
+        assert db.requeue_processing_priority_requests() == 1
+
+        recovered = db.claim_next_priority_request()
+        assert recovered is not None
+        assert recovered.id == request.id

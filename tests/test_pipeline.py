@@ -53,6 +53,40 @@ class TestProcessUrlHistoryLifecycle:
         # Caller-owned history must remain open for subsequent calls.
         assert db.is_downloaded("nonexistent") is False
 
+    @patch("yt_song_to_instrumental.pipeline._upload_track")
+    @patch("yt_song_to_instrumental.pipeline._separate_track", return_value=True)
+    @patch("yt_song_to_instrumental.pipeline._select_tracks")
+    @patch("yt_song_to_instrumental.pipeline.download_tracks", return_value=[])
+    @patch("yt_song_to_instrumental.pipeline.get_separator")
+    def test_checks_priority_hook_before_each_normal_track(
+        self,
+        mock_get_separator,
+        mock_download_tracks,
+        mock_select_tracks,
+        mock_separate_track,
+        mock_upload_track,
+        tmp_path,
+    ):
+        config = _make_app_config(tmp_path)
+        label_config = _make_label_config()
+        db = HistoryDB(":memory:")
+        db.record_download("QueueItem01", "url", "One", "Artist", "", "Channel", "channel-url", "one.wav", "one.jpg")
+        db.record_download("QueueItem02", "url", "Two", "Artist", "", "Channel", "channel-url", "two.wav", "two.jpg")
+        mock_select_tracks.return_value = db.get_all_downloads()
+        before_track = MagicMock()
+
+        process_url(
+            url="https://youtube.com/@source",
+            config=config,
+            label_config=label_config,
+            service=MagicMock(),
+            history=db,
+            before_track=before_track,
+        )
+
+        assert before_track.call_count == 2
+        assert mock_upload_track.call_count == 2
+
 
 class TestProcessUrlSkipUpload:
     @patch("yt_song_to_instrumental.pipeline.download_tracks")
@@ -187,5 +221,4 @@ class TestSortTracksNewestFirst:
         sorted_tracks = sort_tracks_newest_first_preserve_albums(tracks)
         expected_ids = ["a1", "a2", "a3", "s1", "b1", "b2", "b3"]
         assert [t.video_id for t in sorted_tracks] == expected_ids
-
 

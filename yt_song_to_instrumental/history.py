@@ -3,7 +3,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from yt_song_to_instrumental.constants import DATA_DIR, DB_FILENAME
+from yt_song_to_instrumental.constants import (
+    DATA_DIR,
+    DB_FILENAME,
+    PRIORITY_STATUS_COMPLETED,
+    PRIORITY_STATUS_FAILED,
+    PRIORITY_STATUS_PENDING,
+    PRIORITY_STATUS_PROCESSING,
+)
 
 
 @dataclass
@@ -55,6 +62,17 @@ class PlaylistRecord:
     created_at: str
 
 
+@dataclass
+class PriorityRequest:
+    id: int
+    url: str
+    requested_at: str
+    status: str
+    started_at: str | None
+    finished_at: str | None
+    error: str
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS downloads (
     video_id TEXT PRIMARY KEY,
@@ -103,6 +121,19 @@ CREATE TABLE IF NOT EXISTS playlists (
     created_at TEXT NOT NULL,
     UNIQUE(playlist_type, artist, album)
 );
+
+CREATE TABLE IF NOT EXISTS priority_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL,
+    requested_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_priority_requests_status_order
+ON priority_requests(status, requested_at DESC, id DESC);
 """
 
 
@@ -345,6 +376,134 @@ class HistoryDB:
             (model,),
         ).fetchall()
         return [SeparationRecord(**dict(r)) for r in rows]
+
+    # --- Priority requests ---
+
+    def enqueue_priority_request(self, url: str) -> PriorityRequest:
+        """Add a request at the front of the pending queue.
+
+        Re-enqueuing a pending URL moves it back to the front. A URL that is
+        already being processed is returned unchanged so it cannot run twice.
+        """
+        existing = self._conn.execute(
+            """SELECT * FROM priority_requests
+            WHERE url = ? AND status IN (?, ?)
+            ORDER BY id DESC LIMIT 1""",
+            (url, PRIORITY_STATUS_PENDING, PRIORITY_STATUS_PROCESSING),
+        ).fetchone()
+
+        if existing is not None:
+            if existing["status"] == PRIORITY_STATUS_PENDING:
+                self._conn.execute(
+                    """UPDATE priority_requests
+                    SET requested_at = ?, started_at = NULL, finished_at = NULL, error = ''
+                    WHERE id = ?""",
+                    (self._now(), existing["id"]),
+                )
+                self._conn.commit()
+                existing = self._conn.execute(
+                    "SELECT * FROM priority_requests WHERE id = ?",
+                    (existing["id"],),
+                ).fetchone()
+            return PriorityRequest(**dict(existing))
+
+        cursor = self._conn.execute(
+            """INSERT INTO priority_requests
+            (url, requested_at, status, started_at, finished_at, error)
+            VALUES (?, ?, ?, NULL, NULL, '')""",
+            (url, self._now(), PRIORITY_STATUS_PENDING),
+        )
+        self._conn.commit()
+        row = self._conn.execute(
+            "SELECT * FROM priority_requests WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+        return PriorityRequest(**dict(row))
+
+    def claim_next_priority_request(self) -> PriorityRequest | None:
+        """Atomically claim the newest pending request."""
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                """SELECT * FROM priority_requests
+                WHERE status = ?
+                ORDER BY requested_at DESC, id DESC
+                LIMIT 1""",
+                (PRIORITY_STATUS_PENDING,),
+            ).fetchone()
+            if row is None:
+                self._conn.commit()
+                return None
+
+            started_at = self._now()
+            self._conn.execute(
+                """UPDATE priority_requests
+                SET status = ?, started_at = ?, finished_at = NULL, error = ''
+                WHERE id = ? AND status = ?""",
+                (
+                    PRIORITY_STATUS_PROCESSING,
+                    started_at,
+                    row["id"],
+                    PRIORITY_STATUS_PENDING,
+                ),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+        claimed = self._conn.execute(
+            "SELECT * FROM priority_requests WHERE id = ?", (row["id"],)
+        ).fetchone()
+        return PriorityRequest(**dict(claimed))
+
+    def requeue_processing_priority_requests(self) -> int:
+        """Recover requests left claimed when the previous worker stopped."""
+        cursor = self._conn.execute(
+            """UPDATE priority_requests
+            SET status = ?, started_at = NULL, finished_at = NULL, error = ''
+            WHERE status = ?""",
+            (PRIORITY_STATUS_PENDING, PRIORITY_STATUS_PROCESSING),
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
+    def complete_priority_request(self, request_id: int) -> None:
+        self._conn.execute(
+            """UPDATE priority_requests
+            SET status = ?, finished_at = ?, error = ''
+            WHERE id = ?""",
+            (PRIORITY_STATUS_COMPLETED, self._now(), request_id),
+        )
+        self._conn.commit()
+
+    def fail_priority_request(self, request_id: int, error: str) -> None:
+        self._conn.execute(
+            """UPDATE priority_requests
+            SET status = ?, finished_at = ?, error = ?
+            WHERE id = ?""",
+            (PRIORITY_STATUS_FAILED, self._now(), error, request_id),
+        )
+        self._conn.commit()
+
+    def list_priority_requests(self) -> list[PriorityRequest]:
+        rows = self._conn.execute(
+            """SELECT * FROM priority_requests
+            ORDER BY
+                CASE status
+                    WHEN ? THEN 0
+                    WHEN ? THEN 1
+                    WHEN ? THEN 2
+                    ELSE 3
+                END,
+                requested_at DESC,
+                id DESC""",
+            (
+                PRIORITY_STATUS_PROCESSING,
+                PRIORITY_STATUS_PENDING,
+                PRIORITY_STATUS_FAILED,
+            ),
+        ).fetchall()
+        return [PriorityRequest(**dict(row)) for row in rows]
 
     # --- Playlists ---
 

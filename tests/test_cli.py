@@ -5,6 +5,7 @@ import pytest
 
 from yt_song_to_instrumental.cli import _print_pipeline_report, main
 from yt_song_to_instrumental.config import LabelConfig, Source
+from yt_song_to_instrumental.history import PriorityRequest
 from yt_song_to_instrumental.pipeline import PipelineReport, TrackReport
 from yt_song_to_instrumental.preview import PreviewReport
 
@@ -43,6 +44,25 @@ class TestListModels:
 
 
 class TestArgParsing:
+    def test_enqueue_priority_exits_without_loading_label_config(self, capsys):
+        request = PriorityRequest(
+            id=7,
+            url="https://www.youtube.com/watch?v=QueueItem01",
+            requested_at="2026-09-05T00:00:00+00:00",
+            status="pending",
+            started_at=None,
+            finished_at=None,
+            error="",
+        )
+        with patch("yt_song_to_instrumental.cli.enqueue_priority_request", return_value=request) as mock_enqueue, \
+             patch("yt_song_to_instrumental.cli.load_label_config") as mock_load_label, \
+             patch.object(sys, "argv", ["yt-instrumental", "--enqueue-priority", request.url]):
+            main()
+
+        assert mock_enqueue.call_args.args[0] == request.url
+        mock_load_label.assert_not_called()
+        assert "first in queue" in capsys.readouterr().out
+
     def test_url_required_when_no_sources(self):
         cfg = _make_label_config(sources=[])
         with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
@@ -329,4 +349,3 @@ class TestShortsCliPrecedence:
             mock_process.return_value = PipelineReport()
             main()
         assert mock_process.call_args.kwargs["shorts_only"] is True
-

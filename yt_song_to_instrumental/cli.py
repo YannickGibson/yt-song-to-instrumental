@@ -23,6 +23,10 @@ from yt_song_to_instrumental.constants import (
 from yt_song_to_instrumental.history import HistoryDB
 from yt_song_to_instrumental.pipeline import PipelineReport, process_url
 from yt_song_to_instrumental.preview import PreviewReport, preview_url
+from yt_song_to_instrumental.priority import (
+    enqueue_priority_request,
+    process_priority_requests,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +178,8 @@ def main() -> None:
     parser.add_argument("--upload-short", action="store_true", help="Force Shorts upload for all processed tracks in this run")
     parser.add_argument("--upload-short-if-music-video", action="store_true", help="Upload Shorts only if detected as music video in this run")
     parser.add_argument("--no-upload-short", action="store_true", help="Do not upload Shorts in this run")
+    parser.add_argument("--enqueue-priority", metavar="YOUTUBE_URL", help="Put one requested video at the front of the upload queue, then exit")
+    parser.add_argument("--list-priority", action="store_true", help="List priority instrumental requests, then exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
@@ -185,6 +191,39 @@ def main() -> None:
 
     if args.list_models:
         _list_models()
+        return
+
+    if args.enqueue_priority:
+        if args.url:
+            parser.error("Do not combine a positional URL with --enqueue-priority")
+        app_config = AppConfig()
+        try:
+            request = enqueue_priority_request(args.enqueue_priority, app_config.db_path)
+        except ValueError as exc:
+            parser.error(str(exc))
+        print(
+            f"Priority request #{request.id} is {request.status} and is first in queue: "
+            f"{request.url}"
+        )
+        return
+
+    if args.list_priority:
+        if args.url:
+            parser.error("Do not combine a positional URL with --list-priority")
+        app_config = AppConfig()
+        history = HistoryDB(app_config.db_path)
+        try:
+            requests = history.list_priority_requests()
+        finally:
+            history.close()
+        if not requests:
+            print("No priority requests.")
+            return
+        for request in requests:
+            line = f"#{request.id} [{request.status}] {request.url}"
+            if request.error:
+                line += f" ({request.error})"
+            print(line)
         return
 
     if args.cleanup_uploaded:
@@ -301,6 +340,13 @@ def main() -> None:
                 _print_preview_report(report)
             return
 
+        recovered_priority_requests = history.requeue_processing_priority_requests()
+        if recovered_priority_requests:
+            logger.warning(
+                "Recovered %d interrupted priority request(s)",
+                recovered_priority_requests,
+            )
+
         service = None
         if not args.skip_upload:
             yt_config = _youtube_config_or_exit()
@@ -308,6 +354,32 @@ def main() -> None:
             service = authenticate(yt_config.client_secrets_file, yt_config.token_file)
 
         upload_timeout_seconds = args.upload_timeout * 60 if args.upload_timeout else None
+        shared_separator = None
+        drain_priority_requests = None
+        if not args.skip_upload and not args.shorts_only:
+            from yt_song_to_instrumental.separator import get_separator
+
+            shared_separator = get_separator(effective_model)
+
+            def _drain_priority_requests() -> None:
+                priority_results = process_priority_requests(
+                    config=app_config,
+                    label_config=label_config,
+                    service=service,
+                    history=history,
+                    separator=shared_separator,
+                    model_name=effective_model,
+                    privacy=args.privacy,
+                    upload_max_wait_seconds=upload_timeout_seconds,
+                    cleanup_after_upload=not args.no_cleanup,
+                    trim_silence=trim_silence,
+                )
+                for _, priority_report in priority_results:
+                    _print_pipeline_report(priority_report)
+
+            drain_priority_requests = _drain_priority_requests
+            drain_priority_requests()
+
         for src in sources_to_run:
             report = process_url(
                 url=src.url,
@@ -330,8 +402,12 @@ def main() -> None:
                 shorts_only=args.shorts_only,
                 create_album_playlists=src.create_album_playlists,
                 video_channel_url=src.video_channel_url,
+                separator=shared_separator,
+                before_track=drain_priority_requests,
             )
             _print_pipeline_report(report)
+            if drain_priority_requests is not None:
+                drain_priority_requests()
     finally:
         history.close()
 

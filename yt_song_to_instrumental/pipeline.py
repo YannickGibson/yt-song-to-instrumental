@@ -3,7 +3,7 @@ import subprocess
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from yt_song_to_instrumental.cleanup import cleanup_track_artifacts
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
@@ -95,6 +95,8 @@ def process_url(
     shorts_only: bool = False,
     create_album_playlists: bool = True,
     video_channel_url: str | None = None,
+    separator: SeparatorBackend | None = None,
+    before_track: Callable[[], None] | None = None,
 ) -> PipelineReport:
     report = PipelineReport()
     model = model_name or config.separator_model
@@ -106,7 +108,7 @@ def process_url(
         service=service,
         history=history,
         label_config=label_config,
-        separator=get_separator(model),
+        separator=separator or get_separator(model),
         model=model,
         display_name=MODEL_DISPLAY_NAMES.get(model, model),
         privacy=privacy or config.default_privacy,
@@ -138,6 +140,8 @@ def process_url(
     for track in _select_tracks(
         history, model, skip_upload, target_ids=target_ids, shorts_enabled=shorts_enabled, shorts_only=shorts_only
     ):
+        if before_track is not None:
+            before_track()
         artist = artist_override or track.artist
         album = album_override or track.album
 
