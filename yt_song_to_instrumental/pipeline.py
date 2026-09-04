@@ -11,7 +11,7 @@ from yt_song_to_instrumental.constants import (
     MODEL_DISPLAY_NAMES,
     SHORT_DURATION_SECONDS,
 )
-from yt_song_to_instrumental.downloader import DownloadedTrack, download_source_video, download_tracks
+from yt_song_to_instrumental.downloader import DownloadedTrack, download_source_video, download_track_audio, download_tracks
 from yt_song_to_instrumental.history import DownloadRecord, HistoryDB
 from yt_song_to_instrumental.metadata import render_description, render_short_title, render_video_title, strip_topic_suffix
 from yt_song_to_instrumental.playlists import assign_to_playlists, split_artists
@@ -346,12 +346,52 @@ def _upload_short_track(
         return
 
     sep_record = ctx.history.get_separation_record(track.video_id, ctx.model)
-    if sep_record is None or not sep_record.quality_passed:
+    if sep_record is not None and not sep_record.quality_passed:
         return
-    instrumental_path = Path(sep_record.instrumental_path)
+
+    instrumental_path = (
+        Path(sep_record.instrumental_path)
+        if sep_record
+        else ctx.output_dir / ctx.model / ctx.model / track.video_id / "no_vocals.wav"
+    )
+
     if not instrumental_path.exists():
-        logger.warning("Instrumental track not found for Short: %s", instrumental_path)
-        return
+        logger.info("Instrumental track not found on disk for Short: %s. Re-generating instrumental...", track.title)
+        audio_path = Path(track.audio_path)
+        if not audio_path.exists():
+            downloaded_audio = download_track_audio(track.video_id, ctx.tmp_dir)
+            if not downloaded_audio or not downloaded_audio.exists():
+                logger.warning("Could not download audio to re-generate instrumental for Short: %s", track.title)
+                return
+            audio_path = downloaded_audio
+
+        try:
+            sep_result = ctx.separator.separate(audio_path, ctx.output_dir / ctx.model)
+            instrumental_path = sep_result.instrumental_path
+
+            trim_start_t = 0.0
+            if ctx.trim_silence:
+                start_t, end_t, orig_dur = detect_silence_threshold(
+                    instrumental_path, threshold_db=ctx.trim_silence_threshold_db
+                )
+                if start_t > 0.0 or end_t < orig_dur:
+                    trimmed_path = instrumental_path.parent / "no_vocals_trimmed.wav"
+                    trim_audio_file(instrumental_path, trimmed_path, start_t, end_t)
+                    instrumental_path.unlink()
+                    trimmed_path.rename(instrumental_path)
+                    trim_start_t = start_t
+                    start_time = start_t
+
+            qa = check_quality(instrumental_path)
+            ctx.history.record_separation(
+                track.video_id, ctx.model, str(instrumental_path), qa.passed, trim_start_seconds=trim_start_t
+            )
+            if not qa.passed:
+                return
+            sep_record = ctx.history.get_separation_record(track.video_id, ctx.model)
+        except Exception as e:
+            logger.error("Failed to re-generate instrumental for Short (%s): %s", track.title, e)
+            return
 
     logger.info("Processing YouTube Short for: %s", track.title)
     source_video = download_source_video(track.video_id, ctx.tmp_dir)

@@ -511,3 +511,44 @@ def download_source_video(url_or_video_id: str, tmp_dir: Path) -> Path | None:
         logger.error("Failed to download source video for %s: %s", url_or_video_id, e)
         return None
     return None
+
+
+def download_track_audio(url_or_video_id: str, tmp_dir: Path) -> Path | None:
+    """Download single track audio WAV file for separation."""
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    video_id = url_or_video_id
+    if "youtube.com" in url_or_video_id or "youtu.be" in url_or_video_id:
+        target_url = url_or_video_id
+    else:
+        target_url = f"https://www.youtube.com/watch?v={url_or_video_id}"
+
+    cand = tmp_dir / f"{video_id}.wav"
+    if cand.exists():
+        return cand
+
+    download_opts = {
+        "format": YTDLP_FORMAT,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "wav",
+        }],
+        "outtmpl": str(tmp_dir / "%(id)s.%(ext)s"),
+        "writethumbnail": False,
+        "retries": YTDLP_RETRIES,
+        "quiet": True,
+        "no_warnings": True,
+        "extractor_args": {"youtube": {"player_client": ["android", "ios"]}},
+    }
+    try:
+        with yt_dlp.YoutubeDL(download_opts) as ydl:
+            info = ydl.extract_info(target_url, download=True)
+            if info:
+                vid = info.get("id", video_id)
+                p = tmp_dir / f"{vid}.wav"
+                if p.exists():
+                    return p
+    except Exception as e:
+        logger.error("Failed to download audio for %s: %s", url_or_video_id, e)
+        return None
+    return None
+
