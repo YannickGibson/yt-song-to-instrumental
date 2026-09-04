@@ -192,8 +192,9 @@ def _extract_target_video_ids(url: str) -> set[str] | None:
 def sort_tracks_newest_first_preserve_albums(
     tracks: list[DownloadRecord],
 ) -> list[DownloadRecord]:
-    """Sort tracks so newest releases/downloads are processed first, while
-    preserving the internal tracklist order (1..N) within each album."""
+    """Sort by YouTube release date, newest first, while preserving each
+    album's internal tracklist order. Download time is only a fallback for
+    legacy rows whose release date has not been backfilled yet."""
     if not tracks:
         return []
 
@@ -212,11 +213,13 @@ def sort_tracks_newest_first_preserve_albums(
             group_order.append(key)
         groups[key].append(t)
 
-    sorted_keys = sorted(
-        group_order,
-        key=lambda k: max((t.downloaded_at or "") for t in groups[k]),
-        reverse=True,
-    )
+    def group_sort_key(key: str) -> tuple[str, str]:
+        release_dates = [t.release_date for t in groups[key] if t.release_date]
+        release_date = max(release_dates) if release_dates else ""
+        downloaded_at = max((t.downloaded_at or "") for t in groups[key])
+        return release_date, downloaded_at
+
+    sorted_keys = sorted(group_order, key=group_sort_key, reverse=True)
 
     result: list[DownloadRecord] = []
     for k in sorted_keys:

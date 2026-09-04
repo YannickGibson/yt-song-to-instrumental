@@ -92,6 +92,7 @@ def _resolve_metadata(info: dict, ytmusic) -> dict:
         "album": album,
         "channel_name": strip_topic_suffix(raw_channel),
         "channel_url": info.get("channel_url") or info.get("uploader_url") or "",
+        "release_date": info.get("upload_date") or "",
         "_ytmusic_hit": ytmusic is not None,
         "_all_artists": all_artists,
     }
@@ -430,6 +431,8 @@ def download_tracks(
             info["_album_title"] = entry["_album_title"]
 
         meta = _resolve_metadata(info, lookup_track(info["id"]))
+        if not meta["release_date"]:
+            meta["release_date"] = entry.get("upload_date") or lookup_video_date(info["id"]) or ""
         album = meta["album"] or album_index.album_for(meta["title"])
         # A single-track "album" is a single, not an album — clearing it here
         # means no album playlist gets created for it downstream.
@@ -448,6 +451,7 @@ def download_tracks(
             channel_url=meta["channel_url"],
             audio_path=str(audio_path),
             thumbnail_path=str(thumbnail_path),
+            release_date=meta["release_date"],
         )
 
         results.append(DownloadedTrack(
@@ -551,4 +555,3 @@ def download_track_audio(url_or_video_id: str, tmp_dir: Path) -> Path | None:
         logger.error("Failed to download audio for %s: %s", url_or_video_id, e)
         return None
     return None
-

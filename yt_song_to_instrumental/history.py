@@ -25,6 +25,7 @@ class DownloadRecord:
     downloaded_at: str
     audio_path: str
     thumbnail_path: str
+    release_date: str = ""
 
 
 @dataclass
@@ -82,6 +83,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     album TEXT NOT NULL DEFAULT '',
     channel_name TEXT NOT NULL DEFAULT '',
     channel_url TEXT NOT NULL DEFAULT '',
+    release_date TEXT NOT NULL DEFAULT '',
     downloaded_at TEXT NOT NULL,
     audio_path TEXT NOT NULL,
     thumbnail_path TEXT NOT NULL DEFAULT ''
@@ -151,6 +153,14 @@ class HistoryDB:
 
     def _migrate(self):
         try:
+            existing_download_cols = {
+                row["name"] for row in self._conn.execute("PRAGMA table_info(downloads)").fetchall()
+            }
+            if "release_date" not in existing_download_cols:
+                self._conn.execute(
+                    "ALTER TABLE downloads ADD COLUMN release_date TEXT NOT NULL DEFAULT ''"
+                )
+
             existing_sep_cols = {row["name"] for row in self._conn.execute("PRAGMA table_info(separations)").fetchall()}
             if "trim_start_seconds" not in existing_sep_cols:
                 self._conn.execute("ALTER TABLE separations ADD COLUMN trim_start_seconds REAL NOT NULL DEFAULT 0.0")
@@ -194,14 +204,22 @@ class HistoryDB:
         channel_url: str,
         audio_path: str,
         thumbnail_path: str,
+        release_date: str = "",
     ) -> None:
         self._conn.execute(
             """INSERT OR REPLACE INTO downloads
             (video_id, url, title, artist, album, channel_name, channel_url,
-             downloaded_at, audio_path, thumbnail_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             release_date, downloaded_at, audio_path, thumbnail_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (video_id, url, title, artist, album, channel_name, channel_url,
-             self._now(), audio_path, thumbnail_path),
+             release_date, self._now(), audio_path, thumbnail_path),
+        )
+        self._conn.commit()
+
+    def set_release_date(self, video_id: str, release_date: str) -> None:
+        self._conn.execute(
+            "UPDATE downloads SET release_date = ? WHERE video_id = ?",
+            (release_date, video_id),
         )
         self._conn.commit()
 

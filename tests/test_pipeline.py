@@ -222,3 +222,21 @@ class TestSortTracksNewestFirst:
         expected_ids = ["a1", "a2", "a3", "s1", "b1", "b2", "b3"]
         assert [t.video_id for t in sorted_tracks] == expected_ids
 
+    def test_release_date_wins_over_download_time(self):
+        from yt_song_to_instrumental.history import DownloadRecord
+        from yt_song_to_instrumental.pipeline import sort_tracks_newest_first_preserve_albums
+
+        tracks = [
+            DownloadRecord(
+                "old", "url", "Old", "Artist", "", "Chan", "CUrl",
+                "2026-09-05T12:00:00", "p", "t", "20230101",
+            ),
+            DownloadRecord(
+                "new", "url", "New", "Artist", "", "Chan", "CUrl",
+                "2026-09-05T10:00:00", "p", "t", "20260801",
+            ),
+        ]
+
+        sorted_tracks = sort_tracks_newest_first_preserve_albums(tracks)
+
+        assert [t.video_id for t in sorted_tracks] == ["new", "old"]

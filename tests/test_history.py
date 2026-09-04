@@ -22,6 +22,7 @@ def _record_sample_download(db: HistoryDB, video_id: str = "abc123") -> None:
         channel_url="https://youtube.com/c/testchannel",
         audio_path=f"/tmp/{video_id}.wav",
         thumbnail_path=f"/tmp/{video_id}.jpg",
+        release_date="20260901",
     )
 
 
@@ -44,6 +45,7 @@ class TestDownloads:
         assert record.artist == "Test Artist"
         assert record.album == "Test Album"
         assert record.channel_name == "Test Channel"
+        assert record.release_date == "20260901"
 
     def test_get_download_nonexistent(self):
         db = make_db()
@@ -69,9 +71,11 @@ class TestDownloads:
             channel_url="https://youtube.com/c/testchannel",
             audio_path="/tmp/abc123.wav",
             thumbnail_path="/tmp/abc123.jpg",
+            release_date="20260902",
         )
         record = db.get_download("abc123")
         assert record.title == "Updated Title"
+        assert record.release_date == "20260902"
 
 
 class TestSeparations:
