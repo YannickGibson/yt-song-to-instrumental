@@ -15,7 +15,7 @@ from yt_song_to_instrumental.downloader import DownloadedTrack, download_source_
 from yt_song_to_instrumental.history import DownloadRecord, HistoryDB
 from yt_song_to_instrumental.metadata import render_description, render_short_title, render_video_title, strip_topic_suffix
 from yt_song_to_instrumental.playlists import assign_to_playlists, split_artists
-from yt_song_to_instrumental.quality import check_quality
+from yt_song_to_instrumental.quality import _get_duration, check_quality
 from yt_song_to_instrumental.separator import get_separator
 from yt_song_to_instrumental.separator.base import SeparatorBackend
 from yt_song_to_instrumental.thumbnail import get_thumbnail_for_track
@@ -417,7 +417,12 @@ def _upload_short_track(
                 track.title,
                 motion_diff,
             )
-            track_dur = sep_record.duration_seconds if sep_record else None
+            track_dur = None
+            if instrumental_path and instrumental_path.exists():
+                try:
+                    track_dur = _get_duration(instrumental_path)
+                except Exception:
+                    track_dur = None
             alt_video, alt_motion = find_and_verify_music_video(
                 artist=artist,
                 track_title=track.title,
