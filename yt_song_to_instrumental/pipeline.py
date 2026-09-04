@@ -185,6 +185,41 @@ def _extract_target_video_ids(url: str) -> set[str] | None:
     return None
 
 
+def sort_tracks_newest_first_preserve_albums(
+    tracks: list[DownloadRecord],
+) -> list[DownloadRecord]:
+    """Sort tracks so newest releases/downloads are processed first, while
+    preserving the internal tracklist order (1..N) within each album."""
+    if not tracks:
+        return []
+
+    groups: dict[str, list[DownloadRecord]] = {}
+    group_order: list[str] = []
+
+    for t in tracks:
+        clean_album = (t.album or "").strip()
+        key = (
+            f"album:{t.artist.strip().lower()}:{clean_album.lower()}"
+            if clean_album
+            else f"single:{t.video_id}"
+        )
+        if key not in groups:
+            groups[key] = []
+            group_order.append(key)
+        groups[key].append(t)
+
+    sorted_keys = sorted(
+        group_order,
+        key=lambda k: max((t.downloaded_at or "") for t in groups[k]),
+        reverse=True,
+    )
+
+    result: list[DownloadRecord] = []
+    for k in sorted_keys:
+        result.extend(groups[k])
+    return result
+
+
 def _select_tracks(
     history: HistoryDB,
     model: str,
@@ -195,7 +230,10 @@ def _select_tracks(
 ) -> list[DownloadRecord]:
     """Tracks that still need work: not yet separated, or separated but not
     uploaded (unless uploads are skipped). If target_ids is provided, restricts
-    selection to those video IDs."""
+    selection to those video IDs.
+
+    Returns tracks ordered newest-first, while preserving 1..N tracklist order
+    within each album."""
     tracks: list[DownloadRecord] = []
     seen_ids: set[str] = set()
     target_set = set(target_ids) if target_ids is not None else None
@@ -213,7 +251,7 @@ def _select_tracks(
         if (needs_separation or needs_upload or needs_short) and dl.video_id not in seen_ids:
             tracks.append(dl)
             seen_ids.add(dl.video_id)
-    return tracks
+    return sort_tracks_newest_first_preserve_albums(tracks)
 
 
 def _separate_track(

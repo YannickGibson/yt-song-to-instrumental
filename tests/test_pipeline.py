@@ -165,3 +165,27 @@ class TestShortsProcessing:
         assert report.uploaded == 0  # No long-form uploaded
         assert any(t.status == "short_processed" for t in report.tracks)
 
+
+class TestSortTracksNewestFirst:
+    def test_sorts_newest_first_and_preserves_album_track_order(self):
+        from yt_song_to_instrumental.history import DownloadRecord
+        from yt_song_to_instrumental.pipeline import sort_tracks_newest_first_preserve_albums
+
+        tracks = [
+            # Older Album (downloaded at 10:00:00)
+            DownloadRecord("b1", "url", "Track 1", "Artist A", "Old Album", "Chan", "CUrl", "2026-09-01T10:00:00", "p", "t"),
+            DownloadRecord("b2", "url", "Track 2", "Artist A", "Old Album", "Chan", "CUrl", "2026-09-01T10:00:01", "p", "t"),
+            DownloadRecord("b3", "url", "Track 3", "Artist A", "Old Album", "Chan", "CUrl", "2026-09-01T10:00:02", "p", "t"),
+            # Single (downloaded at 11:00:00)
+            DownloadRecord("s1", "url", "New Single", "Artist A", "", "Chan", "CUrl", "2026-09-01T11:00:00", "p", "t"),
+            # Newest Album (downloaded at 12:00:00)
+            DownloadRecord("a1", "url", "Intro", "Artist A", "New Album", "Chan", "CUrl", "2026-09-01T12:00:00", "p", "t"),
+            DownloadRecord("a2", "url", "Banger", "Artist A", "New Album", "Chan", "CUrl", "2026-09-01T12:00:01", "p", "t"),
+            DownloadRecord("a3", "url", "Outro", "Artist A", "New Album", "Chan", "CUrl", "2026-09-01T12:00:02", "p", "t"),
+        ]
+
+        sorted_tracks = sort_tracks_newest_first_preserve_albums(tracks)
+        expected_ids = ["a1", "a2", "a3", "s1", "b1", "b2", "b3"]
+        assert [t.video_id for t in sorted_tracks] == expected_ids
+
+
