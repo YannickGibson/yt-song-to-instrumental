@@ -27,6 +27,8 @@ dependencies = [
     "ytmusicapi",
     "pyyaml",
     "audio-separator>=0.44.2",
+    "audioread",
+    "soundfile",
     "quickjs>=1.19.4",
 ]
 
@@ -36,10 +38,10 @@ dependencies = [
 # we'd hit SIGILL on apply_model. 2.3.x is the last safe baseline for this CPU,
 # which is also why requires-python is capped at <3.13 (torch 2.3 only has
 # cp312 wheels).
-demucs = ["demucs", "torch>=2.0,<2.4", "torchaudio>=2.0,<2.4", "soundfile"]
-mdxnet = ["onnxruntime"]
-mdxnet-gpu = ["onnxruntime-gpu"]
-all-models = ["demucs", "torch>=2.0,<2.4", "torchaudio>=2.0,<2.4", "onnxruntime"]
+demucs = ["demucs>=4.0.0,<4.1.0", "torch>=2.0,<2.4", "torchaudio>=2.0,<2.4", "soundfile", "audioread"]
+mdxnet = ["onnxruntime", "audioread", "soundfile"]
+mdxnet-gpu = ["onnxruntime-gpu", "audioread", "soundfile"]
+all-models = ["demucs>=4.0.0,<4.1.0", "torch>=2.0,<2.4", "torchaudio>=2.0,<2.4", "onnxruntime", "audioread", "soundfile"]
 dev = ["pytest", "pytest-mock"]
 
 [project.scripts]
