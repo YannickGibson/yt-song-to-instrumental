@@ -94,12 +94,13 @@ class TestFindAndVerifyMusicVideo:
         mock_download.return_value = mock_file
         mock_detect.return_value = (True, 15.4)
 
-        result_path, diff = find_and_verify_music_video(
+        result_path, diff, video_url = find_and_verify_music_video(
             "Sample Artist 9", "SANJI", tmp_path, expected_duration=148.0, video_channel_url="https://youtube.com/@sample-artist"
         )
 
         assert result_path == mock_file
         assert diff == 15.4
+        assert video_url == "https://www.youtube.com/watch?v=mv123"
 
     @patch("yt_song_to_instrumental.video_finder.detect_if_music_video")
     @patch("yt_song_to_instrumental.video_finder.download_source_video")
@@ -111,10 +112,11 @@ class TestFindAndVerifyMusicVideo:
         mock_download.return_value = mock_file
         mock_detect.return_value = (False, 0.04)
 
-        result_path, diff = find_and_verify_music_video(
+        result_path, diff, video_url = find_and_verify_music_video(
             "Artist", "Song", tmp_path, expected_duration=180.0
         )
 
         assert result_path is None
         assert diff == 0.0
+        assert video_url is None
         assert not mock_file.exists()  # Ensure cleaned up

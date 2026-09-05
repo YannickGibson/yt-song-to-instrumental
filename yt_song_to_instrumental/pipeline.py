@@ -414,6 +414,7 @@ def _upload_short_track(
             start_time = ctx.trim_start_times[track.video_id]
 
     is_music_vid = None
+    music_video_url = None
     if ctx.label_config.upload_short_if_music_video:
         is_music_vid, motion_diff = detect_if_music_video(
             source_video, start_time=start_time, duration=SHORT_DURATION_SECONDS, video_title=track.title
@@ -430,7 +431,7 @@ def _upload_short_track(
                     track_dur = _get_duration(instrumental_path)
                 except Exception:
                     track_dur = None
-            alt_video, alt_motion = find_and_verify_music_video(
+            alt_video, alt_motion, alt_video_url = find_and_verify_music_video(
                 artist=artist,
                 track_title=track.title,
                 tmp_dir=ctx.tmp_dir,
@@ -441,6 +442,7 @@ def _upload_short_track(
             if alt_video:
                 source_video = alt_video
                 is_music_vid = True
+                music_video_url = alt_video_url
             else:
                 logger.info(
                     "Track %s has no verified music video on YouTube; skipping Short",
@@ -452,6 +454,7 @@ def _upload_short_track(
                 return
         else:
             logger.info("Track %s detected as music video (diff=%.2f)", track.title, motion_diff)
+            music_video_url = track.url
 
     short_video_path = ctx.output_dir / ctx.model / f"{track.video_id}_short.mp4"
     try:
@@ -495,7 +498,7 @@ def _upload_short_track(
         artist_name=artist,
         track_title=track.title,
         album_name=album,
-        original_url=track.url,
+        original_url=music_video_url or track.url,
         original_channel_url=track.channel_url,
         model_name=ctx.display_name,
         label_name=ctx.label_config.label_name,

@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.history import HistoryDB
-from yt_song_to_instrumental.pipeline import PipelineReport, process_url
+from yt_song_to_instrumental.pipeline import PipelineReport, _RunContext, _upload_short_track, process_url
 
 
 def _make_label_config() -> LabelConfig:
@@ -165,6 +165,84 @@ class TestSingleVideoTargeting:
 
 
 class TestShortsProcessing:
+    @patch("yt_song_to_instrumental.pipeline.upload_video", return_value="short-id")
+    @patch("yt_song_to_instrumental.pipeline.render_description", return_value="description")
+    @patch("yt_song_to_instrumental.pipeline.render_short_video")
+    @patch("yt_song_to_instrumental.pipeline.find_and_verify_music_video")
+    @patch("yt_song_to_instrumental.pipeline.detect_if_music_video", return_value=(False, 0.1))
+    @patch("yt_song_to_instrumental.pipeline.download_source_video")
+    def test_short_original_link_uses_verified_alternate_music_video(
+        self,
+        mock_download_source,
+        mock_detect,
+        mock_find_music_video,
+        mock_render_short,
+        mock_render_description,
+        mock_upload,
+        tmp_path,
+    ):
+        source_video = tmp_path / "source.mp4"
+        source_video.touch()
+        alternate_video = tmp_path / "alternate.mp4"
+        alternate_video.touch()
+        instrumental = tmp_path / "instrumental.wav"
+        instrumental.touch()
+        mock_download_source.return_value = source_video
+        music_video_url = "https://www.youtube.com/watch?v=musicvideo1"
+        mock_find_music_video.return_value = (alternate_video, 12.0, music_video_url)
+
+        history = MagicMock()
+        history.is_short_uploaded.return_value = False
+        history.get_separation_record.return_value = MagicMock(
+            instrumental_path=str(instrumental),
+            quality_passed=True,
+            trim_start_seconds=0.0,
+        )
+        label_config = _make_label_config()
+        label_config.upload_short_if_music_video = True
+        label_config.short_description_template = (
+            "Full instrumental: <full-video-url> Original video: <original-url>"
+        )
+        ctx = _RunContext(
+            service=MagicMock(),
+            history=history,
+            label_config=label_config,
+            separator=MagicMock(),
+            model="htdemucs",
+            display_name="HTDemucs",
+            privacy="unlisted",
+            tmp_dir=tmp_path,
+            output_dir=tmp_path,
+            upload_max_wait_seconds=None,
+            cleanup_after_upload=False,
+            trim_silence=False,
+            trim_silence_threshold_db=-35.0,
+            preserve_original_video_title=False,
+        )
+        track = MagicMock(
+            video_id="source-id",
+            title="Song",
+            url="https://www.youtube.com/watch?v=sourceaudio",
+            channel_name="Sample Artist",
+            channel_url="https://www.youtube.com/@sample-artist",
+        )
+
+        _upload_short_track(
+            track,
+            "Sample Artist",
+            "Sample Album",
+            "instrumental-id",
+            0.0,
+            ctx,
+            PipelineReport(),
+        )
+
+        assert mock_render_description.call_args.kwargs["original_url"] == music_video_url
+        assert (
+            mock_render_description.call_args.kwargs["full_video_url"]
+            == "https://www.youtube.com/watch?v=instrumental-id"
+        )
+
     @patch("yt_song_to_instrumental.pipeline.download_tracks")
     @patch("yt_song_to_instrumental.pipeline.get_separator")
     @patch("yt_song_to_instrumental.pipeline._upload_short_track")

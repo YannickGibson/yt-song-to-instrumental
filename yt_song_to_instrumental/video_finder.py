@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yt_dlp
 
-from yt_song_to_instrumental.constants import SHORT_DURATION_SECONDS
+from yt_song_to_instrumental.constants import SHORT_DURATION_SECONDS, YOUTUBE_CANONICAL_VIDEO_URL
 from yt_song_to_instrumental.downloader import download_source_video
 from yt_song_to_instrumental.video_detector import detect_if_music_video
 
@@ -224,7 +224,7 @@ def find_and_verify_music_video(
     expected_duration: float | None = None,
     start_time: float = 0.0,
     video_channel_url: str | None = None,
-) -> tuple[Path | None, float]:
+) -> tuple[Path | None, float, str | None]:
     """Find, download, and motion-verify an official music video for a track.
     
     If video_channel_url is provided, searches the artist's official video channel
@@ -243,7 +243,7 @@ def find_and_verify_music_video(
 
     if not candidates:
         logger.info("No candidate music videos found for: %s — %s", artist, track_title)
-        return None, 0.0
+        return None, 0.0, None
 
     for cand in candidates:
         cand_id = cand["id"]
@@ -265,7 +265,11 @@ def find_and_verify_music_video(
                 cand_title,
                 motion_diff,
             )
-            return video_path, motion_diff
+            return (
+                video_path,
+                motion_diff,
+                YOUTUBE_CANONICAL_VIDEO_URL.format(video_id=cand_id),
+            )
 
         logger.info(
             "Candidate '%s' failed motion check (diff=%.2f < threshold); rejecting",
@@ -278,4 +282,4 @@ def find_and_verify_music_video(
         except Exception:
             pass
 
-    return None, 0.0
+    return None, 0.0, None
