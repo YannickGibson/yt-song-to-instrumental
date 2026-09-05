@@ -255,7 +255,10 @@ def find_and_verify_music_video(
             continue
 
         is_mv, motion_diff = detect_if_music_video(
-            video_path, start_time=start_time, duration=SHORT_DURATION_SECONDS
+            video_path,
+            start_time=start_time,
+            duration=SHORT_DURATION_SECONDS,
+            video_title=cand_title,
         )
 
         if is_mv:

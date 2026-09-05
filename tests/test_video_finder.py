@@ -101,6 +101,7 @@ class TestFindAndVerifyMusicVideo:
         assert result_path == mock_file
         assert diff == 15.4
         assert video_url == "https://www.youtube.com/watch?v=mv123"
+        assert mock_detect.call_args.kwargs["video_title"] == "Sample Artist 9 - SANJI (Official Video)"
 
     @patch("yt_song_to_instrumental.video_finder.detect_if_music_video")
     @patch("yt_song_to_instrumental.video_finder.download_source_video")
