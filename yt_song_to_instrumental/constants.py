@@ -61,6 +61,7 @@ VALID_PRIVACY_STATUSES = (YOUTUBE_PRIVACY_PUBLIC, YOUTUBE_PRIVACY_UNLISTED, YOUT
 DEFAULT_PRIVACY_STATUS = YOUTUBE_PRIVACY_PUBLIC
 UPLOAD_CHUNK_SIZE_BYTES = 10 * 1024 * 1024
 YOUTUBE_TITLE_MAX_LENGTH = 100
+YOUTUBE_PLAYLIST_PAGE_SIZE = 50
 
 # Upload retry behaviour — YouTube's per-account rate limit
 # ("uploadLimitExceeded") is a sliding window, so a delayed retry eventually

@@ -7,6 +7,7 @@ from googleapiclient.errors import HttpError
 from yt_song_to_instrumental.uploader import (
     _extract_error_reason,
     _retry_wait_for,
+    add_video_to_playlist,
     upload_video,
 )
 
@@ -138,3 +139,24 @@ class TestUploadVideoRetry:
         )
         assert result == "VID_OK"
         assert sleeps == []
+
+
+class TestAddVideoToPlaylist:
+    def test_checks_all_pages_before_inserting(self):
+        service = MagicMock()
+        playlist_items = service.playlistItems.return_value
+        playlist_items.list.return_value.execute.side_effect = [
+            {
+                "items": [{"snippet": {"resourceId": {"videoId": "older-video"}}}],
+                "nextPageToken": "page-two",
+            },
+            {
+                "items": [{"snippet": {"resourceId": {"videoId": "target-video"}}}],
+            },
+        ]
+
+        add_video_to_playlist(service, "playlist", "target-video")
+
+        assert playlist_items.list.call_count == 2
+        assert playlist_items.list.call_args_list[1].kwargs["pageToken"] == "page-two"
+        playlist_items.insert.assert_not_called()
