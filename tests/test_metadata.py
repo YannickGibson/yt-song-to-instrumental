@@ -168,55 +168,55 @@ class TestRenderShortTitle:
         from yt_song_to_instrumental.metadata import render_short_title
 
         title = "Sample Artist 1 — Yale (Instrumental)"
-        assert render_short_title(title) == "Yale (Instrumental)"
+        assert render_short_title(title) == "Yale (Instrumental Teaser)"
 
     def test_extracts_song_name_when_no_instrumental_in_title(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
         title = "Sample Artist 1 — Yale"
-        assert render_short_title(title) == "Yale (Instrumental)"
+        assert render_short_title(title) == "Yale (Instrumental Teaser)"
 
     def test_case_insensitive_instrumental(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
         title = "vax — I cannot (instrumental)"
-        assert render_short_title(title) == "I cannot (Instrumental)"
+        assert render_short_title(title) == "I cannot (Instrumental Teaser)"
 
     def test_strips_featured_artists(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
         title = "Nyte Vandal — Past Curfew (feat. Plastic Vow & Hollow Cair) (Instrumental)"
-        assert render_short_title(title) == "Past Curfew (Instrumental)"
+        assert render_short_title(title) == "Past Curfew (Instrumental Teaser)"
 
     def test_strips_multi_artist_headers(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
         title = "Nyte Vandal & @hollowcair - the cipher (Instrumental)"
-        assert render_short_title(title) == "the cipher (Instrumental)"
+        assert render_short_title(title) == "the cipher (Instrumental Teaser)"
 
     def test_strips_unparenthesized_features(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
         title = "Nocturne ft. Hollow Cair (Official Music Video)"
-        assert render_short_title(title) == "Nocturne (Instrumental)"
+        assert render_short_title(title) == "Nocturne (Instrumental Teaser)"
 
     def test_strips_topic_channel_prefix(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
         title = "Sample Artist 19 - Topic — Heads Turn"
-        assert render_short_title(title) == "Heads Turn (Instrumental)"
+        assert render_short_title(title) == "Heads Turn (Instrumental Teaser)"
 
     def test_preserves_solo_song_title(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
         title = "velvetine (Instrumental)"
-        assert render_short_title(title) == "velvetine (Instrumental)"
+        assert render_short_title(title) == "velvetine (Instrumental Teaser)"
 
     def test_strips_teaser_suffix_if_present(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
         title = "Sample Artist 1 — Yale (Instrumental Teaser)"
-        assert render_short_title(title) == "Yale (Instrumental)"
+        assert render_short_title(title) == "Yale (Instrumental Teaser)"
 
 
 
@@ -491,4 +491,3 @@ class TestValidateTemplateTags:
         # closing-tag form "</foo>" or "<Foo>" don't look like template tags
         # and so don't trigger the check.
         validate_template_tags("</closing> <CamelCase>", "templates.test")
-

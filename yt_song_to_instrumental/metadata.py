@@ -14,6 +14,7 @@ from yt_song_to_instrumental.constants import (
     TAG_ORIGINAL_URL,
     TAG_TRACK_TITLE,
     TAG_VIDEO_TITLE,
+    SHORT_TITLE_SUFFIX,
     TEMPLATE_TAG_PATTERN,
     TITLE_PARENTHETICAL_PATTERN,
     TOPIC_SUFFIX_PATTERN,
@@ -196,7 +197,7 @@ _TOPIC_PREFIX_RE = re.compile(r"^\s*.*?\s*[\-–—]\s*topic\s*[\-–—]\s*", r
 
 def render_short_title(video_title: str) -> str:
     """Format YouTube Short title by extracting the song name (removing all artists,
-    features, parentheticals, and teaser markers) and returning '<song name> (Instrumental)'."""
+    features, parentheticals, and teaser markers) and appending the Short title suffix."""
     cleaned = _strip_all_parens(video_title)
     cleaned = _TOPIC_PREFIX_RE.sub("", cleaned)
     cleaned, _ = _split_unparenthesized_features(cleaned)
@@ -206,7 +207,7 @@ def render_short_title(video_title: str) -> str:
     song_name = _collapse_whitespace(cleaned).strip()
     if not song_name:
         song_name = _collapse_whitespace(_strip_all_parens(video_title)).strip() or video_title.strip()
-    return _truncate(_collapse_whitespace(f"{song_name} (Instrumental)"))
+    return _truncate(_collapse_whitespace(f"{song_name} {SHORT_TITLE_SUFFIX}"))
 
 
 def render_description(

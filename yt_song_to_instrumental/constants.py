@@ -120,6 +120,7 @@ SHORT_BAR_HEIGHT = 384
 SHORT_DEFAULT_MOTION_THRESHOLD = 10.0
 SHORT_VIDEO_CRF = "20"
 SHORT_PRESET = "ultrafast"
+SHORT_TITLE_SUFFIX = "(Instrumental Teaser)"
 
 # Template tags
 TAG_ARTIST_NAME = "<artist-name>"
