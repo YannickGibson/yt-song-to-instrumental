@@ -165,25 +165,16 @@ def list_channel_videos(service, channel_id: str, max_results: int = 500) -> set
 
 def add_video_to_playlist(service, playlist_id: str, video_id: str) -> None:
     try:
-        page_token = None
-        while True:
-            list_kwargs = {
-                "playlistId": playlist_id,
-                "part": "snippet",
-                "maxResults": YOUTUBE_PLAYLIST_PAGE_SIZE,
-            }
-            if page_token:
-                list_kwargs["pageToken"] = page_token
-
-            res = service.playlistItems().list(**list_kwargs).execute()
-            for item in res.get("items", []):
-                if item.get("snippet", {}).get("resourceId", {}).get("videoId") == video_id:
-                    logger.info("Video %s is already in playlist %s; skipping duplicate insertion", video_id, playlist_id)
-                    return
-
-            page_token = res.get("nextPageToken")
-            if not isinstance(page_token, str) or not page_token:
-                break
+        res = service.playlistItems().list(
+            playlistId=playlist_id,
+            part="snippet",
+            videoId=video_id,
+            maxResults=YOUTUBE_PLAYLIST_PAGE_SIZE,
+        ).execute()
+        for item in res.get("items", []):
+            if item.get("snippet", {}).get("resourceId", {}).get("videoId") == video_id:
+                logger.info("Video %s is already in playlist %s; skipping duplicate insertion", video_id, playlist_id)
+                return
     except Exception as e:
         logger.warning("Could not check existing items for playlist %s: %s", playlist_id, e)
 

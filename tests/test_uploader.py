@@ -142,21 +142,36 @@ class TestUploadVideoRetry:
 
 
 class TestAddVideoToPlaylist:
-    def test_checks_all_pages_before_inserting(self):
+    def test_filters_for_video_before_inserting(self):
         service = MagicMock()
         playlist_items = service.playlistItems.return_value
-        playlist_items.list.return_value.execute.side_effect = [
-            {
-                "items": [{"snippet": {"resourceId": {"videoId": "older-video"}}}],
-                "nextPageToken": "page-two",
-            },
-            {
-                "items": [{"snippet": {"resourceId": {"videoId": "target-video"}}}],
-            },
-        ]
+        playlist_items.list.return_value.execute.return_value = {
+            "items": [{"snippet": {"resourceId": {"videoId": "target-video"}}}],
+        }
 
         add_video_to_playlist(service, "playlist", "target-video")
 
-        assert playlist_items.list.call_count == 2
-        assert playlist_items.list.call_args_list[1].kwargs["pageToken"] == "page-two"
+        playlist_items.list.assert_called_once_with(
+            playlistId="playlist",
+            part="snippet",
+            videoId="target-video",
+            maxResults=50,
+        )
         playlist_items.insert.assert_not_called()
+
+    def test_inserts_when_filtered_lookup_is_empty(self):
+        service = MagicMock()
+        playlist_items = service.playlistItems.return_value
+        playlist_items.list.return_value.execute.return_value = {"items": []}
+
+        add_video_to_playlist(service, "playlist", "target-video")
+
+        playlist_items.insert.assert_called_once_with(
+            part="snippet",
+            body={
+                "snippet": {
+                    "playlistId": "playlist",
+                    "resourceId": {"kind": "youtube#video", "videoId": "target-video"},
+                },
+            },
+        )
