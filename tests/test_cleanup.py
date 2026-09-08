@@ -162,6 +162,35 @@ class TestCleanupAllUploaded:
 
 
 class TestCleanupOrphans:
+    def test_removes_orphan_short_source_video(self, tmp_path):
+        tmp_dir = tmp_path / "tmp"; tmp_dir.mkdir()
+        output_dir = tmp_path / "output"; output_dir.mkdir()
+        source_video = tmp_dir / "video_abcdefghijk.mp4"
+        source_video.write_bytes(b"x" * 75)
+        db = HistoryDB(db_path=":memory:")
+
+        result = cleanup_orphan_artifacts(db, tmp_dir, output_dir)
+
+        assert not source_video.exists()
+        assert result.removed_files == [source_video]
+        assert result.bytes_freed == 75
+
+    def test_preserves_short_source_video_for_known_track(self, tmp_path):
+        tmp_dir = tmp_path / "tmp"; tmp_dir.mkdir()
+        output_dir = tmp_path / "output"; output_dir.mkdir()
+        source_video = tmp_dir / "video_abcdefghijk.mp4"
+        source_video.write_bytes(b"x" * 75)
+        db = HistoryDB(db_path=":memory:")
+        db.record_download(
+            video_id="abcdefghijk", url="u", title="t", artist="a", album="",
+            channel_name="c", channel_url="cu", audio_path="a", thumbnail_path="t",
+        )
+
+        result = cleanup_orphan_artifacts(db, tmp_dir, output_dir)
+
+        assert source_video.exists()
+        assert result.removed_files == []
+
     def test_removes_files_for_video_ids_not_in_downloads(self, tmp_path):
         # Real-world case: a duplicate was deleted from the DB, but its rendered
         # MP4 was never removed from disk.

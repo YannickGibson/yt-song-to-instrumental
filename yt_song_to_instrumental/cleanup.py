@@ -10,6 +10,13 @@ logger = logging.getLogger(__name__)
 # YouTube video IDs are exactly 11 chars from [A-Za-z0-9_-]. The orphan sweep
 # uses this to identify candidate artifact files from arbitrary filenames.
 _VIDEO_ID_RE = re.compile(r"^([A-Za-z0-9_-]{11})(?:\.|_)")
+_SOURCE_VIDEO_ID_RE = re.compile(r"^video_([A-Za-z0-9_-]{11})(?:\.|_)")
+
+
+def _artifact_video_id(path: Path) -> str | None:
+    """Return the owning YouTube ID for a recognized artifact filename."""
+    match = _SOURCE_VIDEO_ID_RE.match(path.name) or _VIDEO_ID_RE.match(path.name)
+    return match.group(1) if match else None
 
 
 @dataclass
@@ -131,16 +138,16 @@ def cleanup_orphan_artifacts(
         for path in tmp_dir.iterdir():
             if not path.is_file():
                 continue
-            match = _VIDEO_ID_RE.match(path.name)
-            if match and match.group(1) not in known_ids:
+            video_id = _artifact_video_id(path)
+            if video_id and video_id not in known_ids:
                 candidates.append(path)
 
     if output_dir.is_dir():
         for path in output_dir.rglob("*"):
             if not path.is_file():
                 continue
-            match = _VIDEO_ID_RE.match(path.name)
-            if match and match.group(1) not in known_ids:
+            video_id = _artifact_video_id(path)
+            if video_id and video_id not in known_ids:
                 candidates.append(path)
             elif path.parent.name and len(path.parent.name) == 11:
                 # Stem files (vocals.wav, no_vocals.wav) sit under <video_id>/.
