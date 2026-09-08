@@ -3,7 +3,13 @@ from unittest.mock import MagicMock, patch
 
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.history import HistoryDB
-from yt_song_to_instrumental.pipeline import PipelineReport, _RunContext, _upload_short_track, process_url
+from yt_song_to_instrumental.pipeline import (
+    PipelineReport,
+    _RunContext,
+    _upload_short_track,
+    _upload_track,
+    process_url,
+)
 
 
 def _make_label_config() -> LabelConfig:
@@ -165,6 +171,42 @@ class TestSingleVideoTargeting:
 
 
 class TestShortsProcessing:
+    @patch("yt_song_to_instrumental.pipeline.cleanup_track_artifacts")
+    def test_already_uploaded_track_cleans_short_backfill_artifacts(
+        self, mock_cleanup, tmp_path,
+    ):
+        history = MagicMock()
+        history.is_uploaded.return_value = True
+        history.get_upload_record.return_value = MagicMock(
+            youtube_upload_id="existing-upload"
+        )
+        label_config = _make_label_config()
+        ctx = _RunContext(
+            service=MagicMock(),
+            history=history,
+            label_config=label_config,
+            separator=MagicMock(),
+            model="htdemucs",
+            display_name="HTDemucs",
+            privacy="unlisted",
+            tmp_dir=tmp_path / "tmp",
+            output_dir=tmp_path / "output",
+            upload_max_wait_seconds=None,
+            cleanup_after_upload=True,
+            trim_silence=False,
+            trim_silence_threshold_db=-35.0,
+            preserve_original_video_title=False,
+        )
+        track = MagicMock(video_id="abcdefghijk", title="Sample Track")
+
+        _upload_track(
+            track, "Sample Artist", "Sample Album", ctx, PipelineReport()
+        )
+
+        mock_cleanup.assert_called_once_with(
+            "abcdefghijk", "htdemucs", ctx.tmp_dir, ctx.output_dir,
+        )
+
     @patch("yt_song_to_instrumental.pipeline.upload_video", return_value="short-id")
     @patch("yt_song_to_instrumental.pipeline.render_description", return_value="description")
     @patch("yt_song_to_instrumental.pipeline.render_short_video")

@@ -106,6 +106,20 @@ class TestCleanupTrackArtifacts:
         assert len(result.removed_files) == 1
         assert result.bytes_freed == 100
 
+    def test_removes_alternate_short_source_video(self, tmp_path):
+        tmp_dir = tmp_path / "tmp"; tmp_dir.mkdir()
+        output_dir = tmp_path / "output"; output_dir.mkdir()
+        alternate = tmp_dir / "video_abcdefghijk_alternate.webm"
+        alternate.write_bytes(b"a" * 120)
+
+        result = cleanup_track_artifacts(
+            "abcdefghijk", "htdemucs", tmp_dir, output_dir,
+        )
+
+        assert not alternate.exists()
+        assert result.removed_files == [alternate]
+        assert result.bytes_freed == 120
+
 
 class TestCleanupAllUploaded:
     def test_sweeps_every_upload_row(self, tmp_path):

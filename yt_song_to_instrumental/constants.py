@@ -125,6 +125,7 @@ SHORT_DIVERSITY_MAX_MEDIAN_CORRELATION = 0.95
 SHORT_VIDEO_CRF = "20"
 SHORT_PRESET = "ultrafast"
 SHORT_TITLE_SUFFIX = "(Instrumental Teaser)"
+SHORT_ALTERNATE_SOURCE_MARKER = "_alternate"
 
 # Template tags
 TAG_ARTIST_NAME = "<artist-name>"

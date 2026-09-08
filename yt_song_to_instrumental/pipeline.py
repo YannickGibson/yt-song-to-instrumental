@@ -9,6 +9,7 @@ from yt_song_to_instrumental.cleanup import cleanup_track_artifacts
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.constants import (
     MODEL_DISPLAY_NAMES,
+    SHORT_ALTERNATE_SOURCE_MARKER,
     SHORT_DURATION_SECONDS,
 )
 from yt_song_to_instrumental.downloader import DownloadedTrack, download_source_video, download_track_audio, download_tracks
@@ -440,7 +441,14 @@ def _upload_short_track(
                 video_channel_url=ctx.video_channel_url,
             )
             if alt_video:
-                source_video = alt_video
+                managed_alt_video = ctx.tmp_dir / (
+                    f"video_{track.video_id}{SHORT_ALTERNATE_SOURCE_MARKER}"
+                    f"{alt_video.suffix}"
+                )
+                if alt_video != managed_alt_video:
+                    managed_alt_video.unlink(missing_ok=True)
+                    alt_video.replace(managed_alt_video)
+                source_video = managed_alt_video
                 is_music_vid = True
                 music_video_url = alt_video_url
             else:
@@ -580,6 +588,14 @@ def _upload_track(
                 elif track.video_id in ctx.trim_start_times:
                     start_time = ctx.trim_start_times[track.video_id]
                 _upload_short_track(track, artist, album, long_form_yt_id, start_time, ctx, report)
+
+        if ctx.cleanup_after_upload:
+            try:
+                cleanup_track_artifacts(
+                    track.video_id, ctx.model, ctx.tmp_dir, ctx.output_dir,
+                )
+            except Exception as e:
+                logger.warning("Cleanup failed for %s: %s", track.title, e)
 
         logger.info("Already uploaded: %s", track.title)
         report.skipped += 1

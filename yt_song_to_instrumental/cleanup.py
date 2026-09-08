@@ -3,6 +3,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from yt_song_to_instrumental.constants import SHORT_ALTERNATE_SOURCE_MARKER
+
 logger = logging.getLogger(__name__)
 
 # YouTube video IDs are exactly 11 chars from [A-Za-z0-9_-]. The orphan sweep
@@ -26,6 +28,8 @@ def cleanup_track_artifacts(
 
     Removes (when present):
       - tmp/<video_id>.* (raw audio download + thumbnail in any extension)
+      - tmp/video_<video_id>.* (source video downloaded for a Short)
+      - tmp/video_<video_id>_alternate.* (verified alternate music video)
       - <output_dir>/<model>/<model>/<video_id>/*.wav (separated stems)
       - <output_dir>/<model>/<video_id>_instrumental.mp4 (rendered upload video)
 
@@ -38,6 +42,13 @@ def cleanup_track_artifacts(
     candidates: list[Path] = []
     candidates.extend(p for p in tmp_dir.glob(f"{video_id}.*") if p.is_file())
     candidates.extend(p for p in tmp_dir.glob(f"video_{video_id}.*") if p.is_file())
+    candidates.extend(
+        p
+        for p in tmp_dir.glob(
+            f"video_{video_id}{SHORT_ALTERNATE_SOURCE_MARKER}.*"
+        )
+        if p.is_file()
+    )
 
     model_dir = output_dir / model
     stem_dir = model_dir / model / video_id
