@@ -190,12 +190,16 @@ def _extract_target_video_ids(url: str) -> set[str] | None:
     return None
 
 
-def sort_tracks_newest_first_preserve_albums(
+def sort_tracks_for_playlist_insertion(
     tracks: list[DownloadRecord],
 ) -> list[DownloadRecord]:
-    """Sort by YouTube release date, newest first, while preserving each
-    album's internal tracklist order. Download time is only a fallback for
-    legacy rows whose release date has not been backfilled yet."""
+    """Order uploads so YouTube playlists finish newest-first.
+
+    ``playlistItems.insert`` prepends when no position is specified. Process
+    older releases first and reverse each album's tracklist so repeated
+    prepends leave release groups newest-first and album tracks in 1..N order.
+    Download time is only a fallback for legacy rows without release dates.
+    """
     if not tracks:
         return []
 
@@ -220,11 +224,11 @@ def sort_tracks_newest_first_preserve_albums(
         downloaded_at = max((t.downloaded_at or "") for t in groups[key])
         return release_date, downloaded_at
 
-    sorted_keys = sorted(group_order, key=group_sort_key, reverse=True)
+    sorted_keys = sorted(group_order, key=group_sort_key)
 
     result: list[DownloadRecord] = []
     for k in sorted_keys:
-        result.extend(groups[k])
+        result.extend(reversed(groups[k]))
     return result
 
 
@@ -240,8 +244,10 @@ def _select_tracks(
     uploaded (unless uploads are skipped). If target_ids is provided, restricts
     selection to those video IDs.
 
-    Returns tracks ordered newest-first, while preserving 1..N tracklist order
-    within each album."""
+    Returns tracks in insertion order for YouTube's prepend-by-default playlist
+    API, so the resulting playlists are newest-first with album tracks in 1..N
+    order.
+    """
     tracks: list[DownloadRecord] = []
     seen_ids: set[str] = set()
     target_set = set(target_ids) if target_ids is not None else None
@@ -259,7 +265,7 @@ def _select_tracks(
         if (needs_separation or needs_upload or needs_short) and dl.video_id not in seen_ids:
             tracks.append(dl)
             seen_ids.add(dl.video_id)
-    return sort_tracks_newest_first_preserve_albums(tracks)
+    return sort_tracks_for_playlist_insertion(tracks)
 
 
 def _separate_track(

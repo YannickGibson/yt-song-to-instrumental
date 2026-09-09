@@ -320,10 +320,10 @@ class TestShortsProcessing:
         assert any(t.status == "short_processed" for t in report.tracks)
 
 
-class TestSortTracksNewestFirst:
-    def test_sorts_newest_first_and_preserves_album_track_order(self):
+class TestSortTracksForPlaylistInsertion:
+    def test_orders_uploads_for_prepend_and_preserves_final_album_track_order(self):
         from yt_song_to_instrumental.history import DownloadRecord
-        from yt_song_to_instrumental.pipeline import sort_tracks_newest_first_preserve_albums
+        from yt_song_to_instrumental.pipeline import sort_tracks_for_playlist_insertion
 
         tracks = [
             # Older Album (downloaded at 10:00:00)
@@ -338,13 +338,18 @@ class TestSortTracksNewestFirst:
             DownloadRecord("a3", "url", "Outro", "Artist A", "New Album", "Chan", "CUrl", "2026-09-01T12:00:02", "p", "t"),
         ]
 
-        sorted_tracks = sort_tracks_newest_first_preserve_albums(tracks)
-        expected_ids = ["a1", "a2", "a3", "s1", "b1", "b2", "b3"]
-        assert [t.video_id for t in sorted_tracks] == expected_ids
+        insertion_order = sort_tracks_for_playlist_insertion(tracks)
+        expected_insertion_ids = ["b3", "b2", "b1", "s1", "a3", "a2", "a1"]
+        assert [t.video_id for t in insertion_order] == expected_insertion_ids
+
+        final_playlist_ids: list[str] = []
+        for track in insertion_order:
+            final_playlist_ids.insert(0, track.video_id)
+        assert final_playlist_ids == ["a1", "a2", "a3", "s1", "b1", "b2", "b3"]
 
     def test_release_date_wins_over_download_time(self):
         from yt_song_to_instrumental.history import DownloadRecord
-        from yt_song_to_instrumental.pipeline import sort_tracks_newest_first_preserve_albums
+        from yt_song_to_instrumental.pipeline import sort_tracks_for_playlist_insertion
 
         tracks = [
             DownloadRecord(
@@ -357,6 +362,6 @@ class TestSortTracksNewestFirst:
             ),
         ]
 
-        sorted_tracks = sort_tracks_newest_first_preserve_albums(tracks)
+        insertion_order = sort_tracks_for_playlist_insertion(tracks)
 
-        assert [t.video_id for t in sorted_tracks] == ["new", "old"]
+        assert [t.video_id for t in insertion_order] == ["old", "new"]
