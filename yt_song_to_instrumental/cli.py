@@ -179,6 +179,8 @@ def main() -> None:
     parser.add_argument("--upload-short-if-music-video", action="store_true", help="Upload Shorts only if detected as music video in this run")
     parser.add_argument("--no-upload-short", action="store_true", help="Do not upload Shorts in this run")
     parser.add_argument("--enqueue-priority", metavar="YOUTUBE_URL", help="Put one requested video at the front of the upload queue, then exit")
+    parser.add_argument("--priority-short", action="store_true", help="Require a Short after the priority instrumental, even when regular Shorts are disabled")
+    parser.add_argument("--priority-short-start", type=float, default=0.0, metavar="SECONDS", help="Start the requested Short this many seconds into the song")
     parser.add_argument("--list-priority", action="store_true", help="List priority instrumental requests, then exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
@@ -198,14 +200,27 @@ def main() -> None:
             parser.error("Do not combine a positional URL with --enqueue-priority")
         app_config = AppConfig()
         try:
-            request = enqueue_priority_request(args.enqueue_priority, app_config.db_path)
+            request = enqueue_priority_request(
+                args.enqueue_priority,
+                app_config.db_path,
+                upload_short=args.priority_short,
+                short_start_seconds=args.priority_short_start,
+            )
         except ValueError as exc:
             parser.error(str(exc))
         print(
             f"Priority request #{request.id} is {request.status} and is first in queue: "
             f"{request.url}"
         )
+        if request.upload_short:
+            print(
+                "Requested outputs: instrumental, then Short "
+                f"starting at {request.short_start_seconds:g}s"
+            )
         return
+
+    if args.priority_short or args.priority_short_start:
+        parser.error("--priority-short options require --enqueue-priority")
 
     if args.list_priority:
         if args.url:
@@ -221,6 +236,8 @@ def main() -> None:
             return
         for request in requests:
             line = f"#{request.id} [{request.status}] {request.url}"
+            if request.upload_short:
+                line += f" [Short at {request.short_start_seconds:g}s]"
             if request.error:
                 line += f" ({request.error})"
             print(line)

@@ -29,6 +29,7 @@
 16. Add recovery tests whenever changing stage persistence, priority claim/completion behavior, or shutdown handling.
 17. Code changes are not complete until the full local test suite passes and the corresponding GitHub Actions CI run finishes successfully. Never treat local tests alone as final verification.
 18. This is a public repository. Never commit credentials, tokens, `.env`, `label.yml`, database/media artifacts, or artist/label-specific names and configuration. Keep tests, fixtures, docs, branch names, commit messages, and PR text generic.
+19. Priority requests may require a Short and a per-request Short content offset. Preserve instrumental-before-Short ordering, synchronized audio/video offsets, and completion only after every requested upload is durably recorded.
 
 ## Daily maintenance
 - Check the user service and timer, recent failures, SQLite queue/stage state, disk/memory headroom, and whether work is making progress.

@@ -197,6 +197,36 @@ class TestPlaylists:
 
 
 class TestPriorityRequests:
+    def test_persists_requested_short_options(self):
+        db = make_db()
+
+        request = db.enqueue_priority_request(
+            "https://youtube.com/watch?v=QueueItem01",
+            upload_short=True,
+            short_start_seconds=35.0,
+        )
+
+        assert request.upload_short == 1
+        assert request.short_start_seconds == 35.0
+        saved = db.list_priority_requests()[0]
+        assert saved.upload_short == 1
+        assert saved.short_start_seconds == 35.0
+
+    def test_reenqueue_updates_requested_short_options(self):
+        db = make_db()
+        url = "https://youtube.com/watch?v=QueueItem01"
+        first = db.enqueue_priority_request(url)
+
+        updated = db.enqueue_priority_request(
+            url,
+            upload_short=True,
+            short_start_seconds=35.0,
+        )
+
+        assert updated.id == first.id
+        assert updated.upload_short == 1
+        assert updated.short_start_seconds == 35.0
+
     def test_newest_request_is_claimed_first(self):
         db = make_db()
         timestamps = iter(("2026-09-05T00:00:00+00:00", "2026-09-05T00:00:01+00:00", "2026-09-05T00:00:02+00:00"))

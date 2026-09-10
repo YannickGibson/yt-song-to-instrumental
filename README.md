@@ -114,6 +114,8 @@ second pipeline process:
 
 ```bash
 uv run yt-instrumental --enqueue-priority "https://www.youtube.com/watch?v=VIDEO_ID"
+uv run yt-instrumental --enqueue-priority "https://www.youtube.com/watch?v=VIDEO_ID" \
+  --priority-short --priority-short-start 35
 uv run yt-instrumental --list-priority
 ```
 
@@ -123,12 +125,22 @@ already in progress, and then drains requested songs newest-first. Each request
 uses the same download, separation, upload, playlist, and history code as a
 normal source item.
 
+`--priority-short` requires the requested track's long-form instrumental and a
+verified music-video Short, in that order, even when routine Shorts are paused.
+`--priority-short-start` selects the Short's synchronized audio/video content
+offset in seconds. The request remains incomplete until both uploads are
+recorded in SQLite.
+
 Python callers can use the same enqueue operation directly:
 
 ```python
 from yt_song_to_instrumental.priority import enqueue_priority_request
 
-request = enqueue_priority_request("https://www.youtube.com/watch?v=VIDEO_ID")
+request = enqueue_priority_request(
+    "https://www.youtube.com/watch?v=VIDEO_ID",
+    upload_short=True,
+    short_start_seconds=35.0,
+)
 ```
 
 ### Common options

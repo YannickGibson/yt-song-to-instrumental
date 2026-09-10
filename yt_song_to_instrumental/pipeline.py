@@ -72,6 +72,8 @@ class _RunContext:
     video_channel_url: str | None = None
     trim_start_times: dict[str, float] = field(default_factory=dict)
     shorts_only: bool = False
+    force_short: bool = False
+    short_start_seconds: float = 0.0
 
 
 def process_url(
@@ -98,6 +100,8 @@ def process_url(
     video_channel_url: str | None = None,
     separator: SeparatorBackend | None = None,
     before_track: Callable[[], None] | None = None,
+    force_short: bool = False,
+    short_start_seconds: float = 0.0,
 ) -> PipelineReport:
     report = PipelineReport()
     model = model_name or config.separator_model
@@ -123,6 +127,8 @@ def process_url(
         create_album_playlists=create_album_playlists,
         video_channel_url=video_channel_url,
         shorts_only=shorts_only,
+        force_short=force_short,
+        short_start_seconds=short_start_seconds,
     )
 
     target_ids: set[str] | None = None
@@ -137,9 +143,19 @@ def process_url(
         if target_ids is None and _is_single_video_url(url) and downloaded:
             target_ids = {t.video_id for t in downloaded}
 
-    shorts_enabled = label_config.upload_short or label_config.upload_short_if_music_video
+    shorts_enabled = (
+        label_config.upload_short
+        or label_config.upload_short_if_music_video
+        or force_short
+    )
     for track in _select_tracks(
-        history, model, skip_upload, target_ids=target_ids, shorts_enabled=shorts_enabled, shorts_only=shorts_only
+        history,
+        model,
+        skip_upload,
+        target_ids=target_ids,
+        shorts_enabled=shorts_enabled,
+        shorts_only=shorts_only,
+        force_short=force_short,
     ):
         if before_track is not None:
             before_track()
@@ -271,6 +287,7 @@ def _select_tracks(
     target_ids: set[str] | list[str] | None = None,
     shorts_enabled: bool = False,
     shorts_only: bool = False,
+    force_short: bool = False,
 ) -> list[DownloadRecord]:
     """Tracks that still need work: not yet separated, or separated but not
     uploaded (unless uploads are skipped). If target_ids is provided, restricts
@@ -293,7 +310,11 @@ def _select_tracks(
             not skip_upload
             and shorts_enabled
             and not history.is_short_uploaded(dl.video_id, model)
-            and history.get_short_status(dl.video_id, model) not in ("skipped_not_music_video", "skipped_disabled")
+            and (
+                force_short
+                or history.get_short_status(dl.video_id, model)
+                not in ("skipped_not_music_video", "skipped_disabled")
+            )
         )
         if not (needs_separation or needs_upload or needs_short) or dl.video_id in seen_ids:
             continue
@@ -396,7 +417,11 @@ def _upload_short_track(
     ctx: _RunContext,
     report: PipelineReport,
 ) -> None:
-    if not ctx.label_config.upload_short and not ctx.label_config.upload_short_if_music_video:
+    if (
+        not ctx.label_config.upload_short
+        and not ctx.label_config.upload_short_if_music_video
+        and not ctx.force_short
+    ):
         return
 
     if ctx.history.is_short_uploaded(track.video_id, ctx.model):
@@ -464,11 +489,15 @@ def _upload_short_track(
         elif track.video_id in ctx.trim_start_times:
             start_time = ctx.trim_start_times[track.video_id]
 
+    video_start_time = start_time + ctx.short_start_seconds
     is_music_vid = None
     music_video_url = None
-    if ctx.label_config.upload_short_if_music_video:
+    if ctx.label_config.upload_short_if_music_video or ctx.force_short:
         is_music_vid, motion_diff = detect_if_music_video(
-            source_video, start_time=start_time, duration=SHORT_DURATION_SECONDS, video_title=track.title
+            source_video,
+            start_time=video_start_time,
+            duration=SHORT_DURATION_SECONDS,
+            video_title=track.title,
         )
         if not is_music_vid:
             logger.info(
@@ -487,7 +516,7 @@ def _upload_short_track(
                 track_title=track.title,
                 tmp_dir=ctx.tmp_dir,
                 expected_duration=track_dur,
-                start_time=start_time,
+                start_time=video_start_time,
                 video_channel_url=ctx.video_channel_url,
             )
             if alt_video:
@@ -520,7 +549,8 @@ def _upload_short_track(
             source_video,
             instrumental_path,
             short_video_path,
-            start_time=start_time,
+            start_time=video_start_time,
+            audio_start_time=ctx.short_start_seconds,
             duration=SHORT_DURATION_SECONDS,
         )
     except Exception as e:
@@ -605,8 +635,12 @@ def _upload_track(
             return
         upload_rec = ctx.history.get_upload_record(track.video_id, ctx.model)
         long_form_yt_id = upload_rec.youtube_upload_id if upload_rec else ""
-        if ctx.label_config.upload_short or ctx.label_config.upload_short_if_music_video:
-            if not ctx.history.is_short_uploaded(track.video_id, ctx.model) and ctx.history.get_short_status(track.video_id, ctx.model) not in ("skipped_not_music_video", "skipped_disabled"):
+        if _shorts_enabled(ctx):
+            if not ctx.history.is_short_uploaded(track.video_id, ctx.model) and (
+                ctx.force_short
+                or ctx.history.get_short_status(track.video_id, ctx.model)
+                not in ("skipped_not_music_video", "skipped_disabled")
+            ):
                 start_time = 0.0
                 if sep_record and sep_record.trim_start_seconds > 0.0:
                     start_time = sep_record.trim_start_seconds
@@ -629,8 +663,12 @@ def _upload_track(
     if ctx.history.is_uploaded(track.video_id, ctx.model):
         upload_rec = ctx.history.get_upload_record(track.video_id, ctx.model)
         long_form_yt_id = upload_rec.youtube_upload_id if upload_rec else ""
-        if ctx.label_config.upload_short or ctx.label_config.upload_short_if_music_video:
-            if not ctx.history.is_short_uploaded(track.video_id, ctx.model) and ctx.history.get_short_status(track.video_id, ctx.model) not in ("skipped_not_music_video", "skipped_disabled"):
+        if _shorts_enabled(ctx):
+            if not ctx.history.is_short_uploaded(track.video_id, ctx.model) and (
+                ctx.force_short
+                or ctx.history.get_short_status(track.video_id, ctx.model)
+                not in ("skipped_not_music_video", "skipped_disabled")
+            ):
                 start_time = 0.0
                 sep_record = ctx.history.get_separation_record(track.video_id, ctx.model)
                 if sep_record and sep_record.trim_start_seconds > 0.0:
@@ -729,7 +767,7 @@ def _upload_track(
             logger.error("Playlist assignment failed for %s: %s", track.title, e)
 
         # Upload Short if configured
-        if ctx.label_config.upload_short or ctx.label_config.upload_short_if_music_video:
+        if _shorts_enabled(ctx):
             start_time = 0.0
             if sep_record and sep_record.trim_start_seconds > 0.0:
                 start_time = sep_record.trim_start_seconds
@@ -758,3 +796,11 @@ def _upload_track(
         report.tracks.append(
             TrackReport(track.video_id, track.title, artist, "upload_failed", str(e))
         )
+
+
+def _shorts_enabled(ctx: _RunContext) -> bool:
+    return (
+        ctx.label_config.upload_short
+        or ctx.label_config.upload_short_if_music_video
+        or ctx.force_short
+    )

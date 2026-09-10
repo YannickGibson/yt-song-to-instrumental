@@ -56,6 +56,7 @@ def render_short_video(
     audio_path: Path,
     output_path: Path,
     start_time: float = 0.0,
+    audio_start_time: float = 0.0,
     duration: float = SHORT_DURATION_SECONDS,
 ) -> Path:
     """Render a 9:16 YouTube Short video with 20% black bar top/bottom
@@ -74,7 +75,7 @@ def render_short_video(
         "-ss", f"{start_time:.3f}",
         "-t", f"{duration:.3f}",
         "-i", str(video_path),
-        "-ss", "0.0",
+        "-ss", f"{audio_start_time:.3f}",
         "-t", f"{duration:.3f}",
         "-i", str(audio_path),
         "-filter_complex", filter_graph,
@@ -91,10 +92,11 @@ def render_short_video(
     ]
 
     logger.info(
-        "Rendering short video: %s (ss=%.2f) + %s -> %s (dur=%.2f)",
+        "Rendering short video: %s (ss=%.2f) + %s (ss=%.2f) -> %s (dur=%.2f)",
         video_path.name,
         start_time,
         audio_path.name,
+        audio_start_time,
         output_path.name,
         duration,
     )

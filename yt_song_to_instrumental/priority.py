@@ -6,6 +6,8 @@ from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.constants import (
     PRIORITY_ERROR_NO_TRACK,
     PRIORITY_ERROR_REPORT_PREFIX,
+    PRIORITY_ERROR_REQUESTED_OUTPUTS,
+    PRIORITY_DEFAULT_SHORT_START_SECONDS,
     PRIORITY_SUCCESS_TRACK_STATUSES,
     YOUTUBE_CANONICAL_VIDEO_URL,
     YOUTUBE_VIDEO_ID_PATTERN,
@@ -25,12 +27,23 @@ logger = logging.getLogger(__name__)
 def enqueue_priority_request(
     url: str,
     db_path: str | Path | None = None,
+    *,
+    upload_short: bool = False,
+    short_start_seconds: float = PRIORITY_DEFAULT_SHORT_START_SECONDS,
 ) -> PriorityRequest:
     """Put one YouTube video at the front of the instrumental request queue."""
+    if short_start_seconds < PRIORITY_DEFAULT_SHORT_START_SECONDS:
+        raise ValueError("Short start time must be zero or greater")
+    if short_start_seconds and not upload_short:
+        raise ValueError("A Short start time requires upload_short=True")
     normalized_url = _normalize_video_url(url)
     history = HistoryDB(db_path)
     try:
-        return history.enqueue_priority_request(normalized_url)
+        return history.enqueue_priority_request(
+            normalized_url,
+            upload_short=upload_short,
+            short_start_seconds=short_start_seconds,
+        )
     finally:
         history.close()
 
@@ -66,6 +79,8 @@ def process_priority_requests(
                 upload_max_wait_seconds=upload_max_wait_seconds,
                 cleanup_after_upload=cleanup_after_upload,
                 trim_silence=trim_silence,
+                force_short=bool(request.upload_short),
+                short_start_seconds=request.short_start_seconds,
             )
         except Exception as exc:
             history.fail_priority_request(request.id, str(exc))
@@ -73,20 +88,44 @@ def process_priority_requests(
             continue
 
         results.append((request, report))
-        successful = any(
-            track.status in PRIORITY_SUCCESS_TRACK_STATUSES
-            for track in report.tracks
-        )
+        successful = _requested_outputs_complete(request, report, history, model_name)
         if report.failed == 0 and successful:
             history.complete_priority_request(request.id)
             logger.info("Priority request #%d completed", request.id)
             continue
 
-        reason = _report_failure_reason(report)
+        reason = (
+            PRIORITY_ERROR_REQUESTED_OUTPUTS
+            if request.upload_short and report.failed == 0
+            else _report_failure_reason(report)
+        )
         history.fail_priority_request(request.id, reason)
         logger.error("Priority request #%d failed: %s", request.id, reason)
 
     return results
+
+
+def _requested_outputs_complete(
+    request: PriorityRequest,
+    report: PipelineReport,
+    history: HistoryDB,
+    model_name: str,
+) -> bool:
+    pipeline_succeeded = any(
+        track.status in PRIORITY_SUCCESS_TRACK_STATUSES for track in report.tracks
+    )
+    if not pipeline_succeeded:
+        return False
+    if not request.upload_short:
+        return True
+
+    video_ids = _extract_target_video_ids(request.url)
+    if video_ids is None or len(video_ids) != 1:
+        return False
+    video_id = next(iter(video_ids))
+    return history.is_uploaded(video_id, model_name) and history.is_short_uploaded(
+        video_id, model_name
+    )
 
 
 def _normalize_video_url(url: str) -> str:

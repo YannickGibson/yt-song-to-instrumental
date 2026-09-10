@@ -53,8 +53,89 @@ class TestEnqueuePriorityRequest:
                 tmp_path / "history.db",
             )
 
+    def test_persists_short_requirement_and_offset(self, tmp_path):
+        request = enqueue_priority_request(
+            "https://youtu.be/QueueItem01",
+            tmp_path / "history.db",
+            upload_short=True,
+            short_start_seconds=35.0,
+        )
+
+        assert request.upload_short == 1
+        assert request.short_start_seconds == 35.0
+
+    def test_rejects_offset_without_short(self, tmp_path):
+        with pytest.raises(ValueError, match="requires upload_short"):
+            enqueue_priority_request(
+                "https://youtu.be/QueueItem01",
+                tmp_path / "history.db",
+                short_start_seconds=35.0,
+            )
+
+    def test_rejects_negative_short_offset(self, tmp_path):
+        with pytest.raises(ValueError, match="zero or greater"):
+            enqueue_priority_request(
+                "https://youtu.be/QueueItem01",
+                tmp_path / "history.db",
+                upload_short=True,
+                short_start_seconds=-1.0,
+            )
+
 
 class TestProcessPriorityRequests:
+    @patch("yt_song_to_instrumental.priority.process_url")
+    def test_requires_both_outputs_and_passes_short_options(self, mock_process_url):
+        db = HistoryDB(":memory:")
+        request = db.enqueue_priority_request(
+            "https://youtube.com/watch?v=QueueItem01",
+            upload_short=True,
+            short_start_seconds=35.0,
+        )
+
+        def process_both(**kwargs):
+            db.record_upload("QueueItem01", "htdemucs", "long-form-id", "public")
+            db.record_short_upload("QueueItem01", "htdemucs", "short-id")
+            return PipelineReport(
+                uploaded=1,
+                tracks=[
+                    TrackReport(
+                        "QueueItem01", "Requested", "Sample Artist", "uploaded"
+                    )
+                ],
+            )
+
+        mock_process_url.side_effect = process_both
+
+        _process_pending(db)
+
+        call = mock_process_url.call_args.kwargs
+        assert call["force_short"] is True
+        assert call["short_start_seconds"] == 35.0
+        saved = {item.id: item for item in db.list_priority_requests()}[request.id]
+        assert saved.status == PRIORITY_STATUS_COMPLETED
+
+    @patch("yt_song_to_instrumental.priority.process_url")
+    def test_fails_requested_short_when_only_long_form_completed(self, mock_process_url):
+        db = HistoryDB(":memory:")
+        request = db.enqueue_priority_request(
+            "https://youtube.com/watch?v=QueueItem01",
+            upload_short=True,
+            short_start_seconds=35.0,
+        )
+        db.record_upload("QueueItem01", "htdemucs", "long-form-id", "public")
+        mock_process_url.return_value = PipelineReport(
+            uploaded=1,
+            tracks=[
+                TrackReport("QueueItem01", "Requested", "Sample Artist", "uploaded")
+            ],
+        )
+
+        _process_pending(db)
+
+        saved = {item.id: item for item in db.list_priority_requests()}[request.id]
+        assert saved.status == PRIORITY_STATUS_FAILED
+        assert "not both completed" in saved.error
+
     @patch("yt_song_to_instrumental.priority.process_url")
     def test_processes_newest_first_and_marks_complete(self, mock_process_url):
         db = HistoryDB(":memory:")

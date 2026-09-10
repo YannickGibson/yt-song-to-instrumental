@@ -72,6 +72,8 @@ class PriorityRequest:
     started_at: str | None
     finished_at: str | None
     error: str
+    upload_short: int = 0
+    short_start_seconds: float = 0.0
 
 
 _SCHEMA = """
@@ -131,7 +133,9 @@ CREATE TABLE IF NOT EXISTS priority_requests (
     status TEXT NOT NULL,
     started_at TEXT,
     finished_at TEXT,
-    error TEXT NOT NULL DEFAULT ''
+    error TEXT NOT NULL DEFAULT '',
+    upload_short INTEGER NOT NULL DEFAULT 0,
+    short_start_seconds REAL NOT NULL DEFAULT 0.0
 );
 
 CREATE INDEX IF NOT EXISTS idx_priority_requests_status_order
@@ -175,6 +179,22 @@ class HistoryDB:
             for col_name, col_type in new_cols.items():
                 if col_name not in existing_cols:
                     self._conn.execute(f"ALTER TABLE uploads ADD COLUMN {col_name} {col_type}")
+
+            existing_priority_cols = {
+                row["name"]
+                for row in self._conn.execute(
+                    "PRAGMA table_info(priority_requests)"
+                ).fetchall()
+            }
+            priority_cols = {
+                "upload_short": "INTEGER NOT NULL DEFAULT 0",
+                "short_start_seconds": "REAL NOT NULL DEFAULT 0.0",
+            }
+            for col_name, col_type in priority_cols.items():
+                if col_name not in existing_priority_cols:
+                    self._conn.execute(
+                        f"ALTER TABLE priority_requests ADD COLUMN {col_name} {col_type}"
+                    )
             self._conn.commit()
         except Exception:
             pass
@@ -397,7 +417,13 @@ class HistoryDB:
 
     # --- Priority requests ---
 
-    def enqueue_priority_request(self, url: str) -> PriorityRequest:
+    def enqueue_priority_request(
+        self,
+        url: str,
+        *,
+        upload_short: bool = False,
+        short_start_seconds: float = 0.0,
+    ) -> PriorityRequest:
         """Add a request at the front of the pending queue.
 
         Re-enqueuing a pending URL moves it back to the front. A URL that is
@@ -414,9 +440,15 @@ class HistoryDB:
             if existing["status"] == PRIORITY_STATUS_PENDING:
                 self._conn.execute(
                     """UPDATE priority_requests
-                    SET requested_at = ?, started_at = NULL, finished_at = NULL, error = ''
+                    SET requested_at = ?, started_at = NULL, finished_at = NULL,
+                        error = '', upload_short = ?, short_start_seconds = ?
                     WHERE id = ?""",
-                    (self._now(), existing["id"]),
+                    (
+                        self._now(),
+                        int(upload_short),
+                        float(short_start_seconds),
+                        existing["id"],
+                    ),
                 )
                 self._conn.commit()
                 existing = self._conn.execute(
@@ -427,9 +459,16 @@ class HistoryDB:
 
         cursor = self._conn.execute(
             """INSERT INTO priority_requests
-            (url, requested_at, status, started_at, finished_at, error)
-            VALUES (?, ?, ?, NULL, NULL, '')""",
-            (url, self._now(), PRIORITY_STATUS_PENDING),
+            (url, requested_at, status, started_at, finished_at, error,
+             upload_short, short_start_seconds)
+            VALUES (?, ?, ?, NULL, NULL, '', ?, ?)""",
+            (
+                url,
+                self._now(),
+                PRIORITY_STATUS_PENDING,
+                int(upload_short),
+                float(short_start_seconds),
+            ),
         )
         self._conn.commit()
         row = self._conn.execute(

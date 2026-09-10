@@ -53,13 +53,28 @@ class TestArgParsing:
             started_at=None,
             finished_at=None,
             error="",
+            upload_short=1,
+            short_start_seconds=35.0,
         )
         with patch("yt_song_to_instrumental.cli.enqueue_priority_request", return_value=request) as mock_enqueue, \
              patch("yt_song_to_instrumental.cli.load_label_config") as mock_load_label, \
-             patch.object(sys, "argv", ["yt-instrumental", "--enqueue-priority", request.url]):
+             patch.object(
+                 sys,
+                 "argv",
+                 [
+                     "yt-instrumental",
+                     "--enqueue-priority",
+                     request.url,
+                     "--priority-short",
+                     "--priority-short-start",
+                     "35",
+                 ],
+             ):
             main()
 
         assert mock_enqueue.call_args.args[0] == request.url
+        assert mock_enqueue.call_args.kwargs["upload_short"] is True
+        assert mock_enqueue.call_args.kwargs["short_start_seconds"] == 35.0
         mock_load_label.assert_not_called()
         assert "first in queue" in capsys.readouterr().out
 

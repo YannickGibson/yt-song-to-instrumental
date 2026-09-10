@@ -14,6 +14,10 @@ PRIORITY_STATUS_FAILED = "failed"
 PRIORITY_SUCCESS_TRACK_STATUSES = ("uploaded", "already_uploaded")
 PRIORITY_ERROR_NO_TRACK = "The requested URL produced no uploadable track"
 PRIORITY_ERROR_REPORT_PREFIX = "Pipeline did not complete: "
+PRIORITY_ERROR_REQUESTED_OUTPUTS = (
+    "Requested long-form instrumental and Short were not both completed"
+)
+PRIORITY_DEFAULT_SHORT_START_SECONDS = 0.0
 YOUTUBE_CANONICAL_VIDEO_URL = "https://www.youtube.com/watch?v={video_id}"
 YOUTUBE_VIDEO_ID_PATTERN = r"^[A-Za-z0-9_-]{11}$"
 

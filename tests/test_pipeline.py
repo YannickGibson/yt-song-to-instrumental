@@ -172,6 +172,79 @@ class TestSingleVideoTargeting:
 
 
 class TestShortsProcessing:
+    @patch("yt_song_to_instrumental.pipeline.upload_video", return_value="short-id")
+    @patch("yt_song_to_instrumental.pipeline.render_description", return_value="description")
+    @patch("yt_song_to_instrumental.pipeline.render_short_video")
+    @patch(
+        "yt_song_to_instrumental.pipeline.detect_if_music_video",
+        return_value=(True, 25.0),
+    )
+    @patch("yt_song_to_instrumental.pipeline.download_source_video")
+    def test_forced_short_uses_synchronized_content_offset_while_globally_disabled(
+        self,
+        mock_download_source,
+        mock_detect,
+        mock_render_short,
+        mock_render_description,
+        mock_upload,
+        tmp_path,
+    ):
+        source_video = tmp_path / "source.mp4"
+        source_video.touch()
+        instrumental = tmp_path / "instrumental.wav"
+        instrumental.touch()
+        mock_download_source.return_value = source_video
+        history = MagicMock()
+        history.is_short_uploaded.return_value = False
+        history.get_separation_record.return_value = MagicMock(
+            instrumental_path=str(instrumental),
+            quality_passed=True,
+            trim_start_seconds=2.5,
+        )
+        label_config = _make_label_config()
+        assert label_config.upload_short is False
+        assert label_config.upload_short_if_music_video is False
+        ctx = _RunContext(
+            service=MagicMock(),
+            history=history,
+            label_config=label_config,
+            separator=MagicMock(),
+            model="htdemucs",
+            display_name="HTDemucs",
+            privacy="unlisted",
+            tmp_dir=tmp_path,
+            output_dir=tmp_path,
+            upload_max_wait_seconds=None,
+            cleanup_after_upload=False,
+            trim_silence=False,
+            trim_silence_threshold_db=-35.0,
+            preserve_original_video_title=False,
+            force_short=True,
+            short_start_seconds=35.0,
+        )
+        track = MagicMock(
+            video_id="source-id",
+            title="Sample Song (Official Music Video)",
+            url="https://www.youtube.com/watch?v=sourcevideo",
+            channel_name="Sample Artist",
+            channel_url="https://www.youtube.com/@sample-artist",
+        )
+
+        _upload_short_track(
+            track,
+            "Sample Artist",
+            "Sample Album",
+            "instrumental-id",
+            2.5,
+            ctx,
+            PipelineReport(),
+        )
+
+        assert mock_detect.call_args.kwargs["start_time"] == 37.5
+        assert mock_render_short.call_args.kwargs["start_time"] == 37.5
+        assert mock_render_short.call_args.kwargs["audio_start_time"] == 35.0
+        history.record_short_upload.assert_called_once()
+
     @patch("yt_song_to_instrumental.pipeline.cleanup_track_artifacts")
     def test_already_uploaded_track_cleans_short_backfill_artifacts(
         self, mock_cleanup, tmp_path,

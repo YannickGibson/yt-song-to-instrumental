@@ -61,14 +61,22 @@ class TestRenderShortVideo:
             return _mock_result()
 
         with patch("yt_song_to_instrumental.video_render.subprocess.run", side_effect=fake_run) as mock_run:
-            result = render_short_video(video, audio, output, start_time=3.5, duration=20.0)
+            result = render_short_video(
+                video,
+                audio,
+                output,
+                start_time=38.5,
+                audio_start_time=35.0,
+                duration=20.0,
+            )
 
         assert result == output
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "ffmpeg"
         assert str(video) in cmd
         assert str(audio) in cmd
-        assert "3.500" in cmd
+        assert "38.500" in cmd
+        assert "35.000" in cmd
         assert "20.000" in cmd
         assert "-filter_complex" in cmd
         filter_str = cmd[cmd.index("-filter_complex") + 1]
@@ -105,4 +113,3 @@ class _mock_result:
         self.stdout = ""
         self.stderr = ""
         self.returncode = 0
-
