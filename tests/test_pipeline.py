@@ -6,6 +6,7 @@ from yt_song_to_instrumental.history import HistoryDB
 from yt_song_to_instrumental.pipeline import (
     PipelineReport,
     _RunContext,
+    _select_tracks,
     _upload_short_track,
     _upload_track,
     process_url,
@@ -365,3 +366,26 @@ class TestSortTracksForPlaylistInsertion:
         insertion_order = sort_tracks_for_playlist_insertion(tracks)
 
         assert [t.video_id for t in insertion_order] == ["old", "new"]
+
+
+class TestSelectTracks:
+    def test_newer_short_backfill_precedes_old_long_form_upload(self):
+        db = HistoryDB(":memory:")
+        db.record_download(
+            "OldUpload01", "url", "Old Upload", "Example Artist", "", "Channel",
+            "channel-url", "old.wav", "old.jpg", release_date="20230101",
+        )
+        db.record_download(
+            "NewShort01", "url", "New Short", "Example Artist", "", "Channel",
+            "channel-url", "new.wav", "new.jpg", release_date="20251001",
+        )
+        db.record_upload("NewShort01", "htdemucs", "Uploaded01", "public")
+
+        selected = _select_tracks(
+            db,
+            "htdemucs",
+            skip_upload=False,
+            shorts_enabled=True,
+        )
+
+        assert [track.video_id for track in selected] == ["NewShort01", "OldUpload01"]

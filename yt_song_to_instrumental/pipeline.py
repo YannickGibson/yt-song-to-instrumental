@@ -232,6 +232,38 @@ def sort_tracks_for_playlist_insertion(
     return result
 
 
+def sort_tracks_newest_first_preserve_albums(
+    tracks: list[DownloadRecord],
+) -> list[DownloadRecord]:
+    """Order release groups newest-first while preserving album track order."""
+    if not tracks:
+        return []
+
+    groups: dict[str, list[DownloadRecord]] = {}
+    group_order: list[str] = []
+
+    for track in tracks:
+        clean_album = (track.album or "").strip()
+        key = (
+            f"album:{track.artist.strip().lower()}:{clean_album.lower()}"
+            if clean_album
+            else f"single:{track.video_id}"
+        )
+        if key not in groups:
+            groups[key] = []
+            group_order.append(key)
+        groups[key].append(track)
+
+    def group_sort_key(key: str) -> tuple[str, str]:
+        release_dates = [track.release_date for track in groups[key] if track.release_date]
+        release_date = max(release_dates) if release_dates else ""
+        downloaded_at = max((track.downloaded_at or "") for track in groups[key])
+        return release_date, downloaded_at
+
+    sorted_keys = sorted(group_order, key=group_sort_key, reverse=True)
+    return [track for key in sorted_keys for track in groups[key]]
+
+
 def _select_tracks(
     history: HistoryDB,
     model: str,
@@ -248,7 +280,8 @@ def _select_tracks(
     API, so the resulting playlists are newest-first with album tracks in 1..N
     order.
     """
-    tracks: list[DownloadRecord] = []
+    playlist_upload_tracks: list[DownloadRecord] = []
+    short_backfill_tracks: list[DownloadRecord] = []
     seen_ids: set[str] = set()
     target_set = set(target_ids) if target_ids is not None else None
     for dl in history.get_all_downloads():
@@ -262,10 +295,21 @@ def _select_tracks(
             and not history.is_short_uploaded(dl.video_id, model)
             and history.get_short_status(dl.video_id, model) not in ("skipped_not_music_video", "skipped_disabled")
         )
-        if (needs_separation or needs_upload or needs_short) and dl.video_id not in seen_ids:
-            tracks.append(dl)
-            seen_ids.add(dl.video_id)
-    return sort_tracks_for_playlist_insertion(tracks)
+        if not (needs_separation or needs_upload or needs_short) or dl.video_id in seen_ids:
+            continue
+        seen_ids.add(dl.video_id)
+        if needs_short and history.is_uploaded(dl.video_id, model) and not needs_upload:
+            short_backfill_tracks.append(dl)
+        else:
+            playlist_upload_tracks.append(dl)
+
+    # Short backfills do not alter long-form playlists, so they can safely run
+    # newest-first and ahead of an old upload backlog. Long-form work retains
+    # prepend-aware ordering so final playlist release order stays correct.
+    return (
+        sort_tracks_newest_first_preserve_albums(short_backfill_tracks)
+        + sort_tracks_for_playlist_insertion(playlist_upload_tracks)
+    )
 
 
 def _separate_track(
