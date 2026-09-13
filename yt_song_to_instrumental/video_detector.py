@@ -14,6 +14,7 @@ from yt_song_to_instrumental.constants import (
     SHORT_DIVERSITY_MIN_MEDIAN_DIFF,
     SHORT_DIVERSITY_SAMPLE_COUNT,
     SHORT_DURATION_SECONDS,
+    SHORT_SOURCE_TITLE_PART,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,20 @@ _AUDIO_INDICATOR_PATTERN = re.compile(
     r"\b(?:official\s+)?(?:audio|visualizer|lyric\s+video|lyrics)\b",
     re.IGNORECASE,
 )
+
+
+def get_source_video_title(service, video_id: str) -> str | None:
+    """Read the unmodified source title; normalized track metadata loses warnings."""
+    try:
+        response = service.videos().list(part=SHORT_SOURCE_TITLE_PART, id=video_id).execute()
+        for item in response["items"]:
+            if item["id"] == video_id:
+                title = item["snippet"]["title"]
+                if isinstance(title, str) and title.strip():
+                    return title
+    except Exception:
+        logger.warning("Source title unavailable; refusing unverified Short source")
+    return None
 
 
 def _probe_duration(video_path: Path) -> float | None:
@@ -45,7 +60,7 @@ def _frame_correlation(first: np.ndarray, second: np.ndarray) -> float:
     first_std = float(np.std(first))
     second_std = float(np.std(second))
     if first_std == 0.0 or second_std == 0.0:
-        return 1.0 if np.array_equal(first, second) else 0.0
+        return 1.0
     return float(np.corrcoef(first.reshape(-1), second.reshape(-1))[0, 1])
 
 

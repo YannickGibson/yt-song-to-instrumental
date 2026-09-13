@@ -163,3 +163,13 @@ ALL_TEMPLATE_TAGS = (
 # Matches any kebab-case template tag like "<artist-name>". Used by
 # validate_template_tags to detect unsupported tags before upload.
 TEMPLATE_TAG_PATTERN = r"<[a-z][a-z-]*>"
+
+# Conservative Short source validation and title formatting.
+SHORT_SOURCE_TITLE_PART = "snippet"
+SHORT_SOURCE_METADATA_UNAVAILABLE = "source_metadata_unavailable"
+SHORT_ARTIST_SUFFIX_TEMPLATE = " [{artist}]"
+SHORT_ARTIST_MAX_LENGTH = 60
+VIDEO_MATCH_TOKEN_PATTERN = r"[^\W_]+"
+VIDEO_MATCH_PARENS_PATTERN = r"\([^)]*\)|\[[^]]*\]"
+VIDEO_MATCH_DASH_PATTERN = r"\s+[-–—]\s+"
+VIDEO_MATCH_DEFAULT_ARTIST = ""

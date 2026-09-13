@@ -11,6 +11,7 @@ from yt_song_to_instrumental.constants import (
     MODEL_DISPLAY_NAMES,
     SHORT_ALTERNATE_SOURCE_MARKER,
     SHORT_DURATION_SECONDS,
+    SHORT_SOURCE_METADATA_UNAVAILABLE,
 )
 from yt_song_to_instrumental.downloader import DownloadedTrack, download_source_video, download_track_audio, download_tracks
 from yt_song_to_instrumental.history import DownloadRecord, HistoryDB
@@ -21,7 +22,7 @@ from yt_song_to_instrumental.separator import get_separator
 from yt_song_to_instrumental.separator.base import SeparatorBackend
 from yt_song_to_instrumental.thumbnail import get_thumbnail_for_track
 from yt_song_to_instrumental.uploader import upload_video
-from yt_song_to_instrumental.video_detector import detect_if_music_video
+from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title
 from yt_song_to_instrumental.video_finder import find_and_verify_music_video
 from yt_song_to_instrumental.video_render import render_short_video, render_video
 from yt_song_to_instrumental.trimmer import detect_silence_threshold, trim_audio_file
@@ -477,6 +478,10 @@ def _upload_short_track(
             return
 
     logger.info("Processing YouTube Short for: %s", track.title)
+    source_title = get_source_video_title(ctx.service, track.video_id)
+    if source_title is None:
+        ctx.history.record_short_status(track.video_id, ctx.model, SHORT_SOURCE_METADATA_UNAVAILABLE)
+        return
     source_video = download_source_video(track.video_id, ctx.tmp_dir)
     if not source_video or not source_video.exists():
         logger.warning("Source video could not be downloaded for Short: %s", track.title)
@@ -492,56 +497,55 @@ def _upload_short_track(
     video_start_time = start_time + ctx.short_start_seconds
     is_music_vid = None
     music_video_url = None
-    if ctx.label_config.upload_short_if_music_video or ctx.force_short:
-        is_music_vid, motion_diff = detect_if_music_video(
-            source_video,
-            start_time=video_start_time,
-            duration=SHORT_DURATION_SECONDS,
-            video_title=track.title,
+    is_music_vid, motion_diff = detect_if_music_video(
+        source_video,
+        start_time=video_start_time,
+        duration=SHORT_DURATION_SECONDS,
+        video_title=source_title,
+    )
+    if not is_music_vid:
+        logger.info(
+            "Track %s source video detected as static / non-music-video (diff=%.2f); searching YouTube for official music video...",
+            track.title,
+            motion_diff,
         )
-        if not is_music_vid:
-            logger.info(
-                "Track %s source video detected as static / non-music-video (diff=%.2f); searching YouTube for official music video...",
-                track.title,
-                motion_diff,
+        track_dur = None
+        if instrumental_path and instrumental_path.exists():
+            try:
+                track_dur = _get_duration(instrumental_path)
+            except Exception:
+                track_dur = None
+        alt_video, alt_motion, alt_video_url = find_and_verify_music_video(
+            artist=artist,
+            track_title=track.title,
+            tmp_dir=ctx.tmp_dir,
+            expected_duration=track_dur,
+            start_time=video_start_time,
+            video_channel_url=ctx.video_channel_url,
+        )
+        if alt_video:
+            managed_alt_video = ctx.tmp_dir / (
+                f"video_{track.video_id}{SHORT_ALTERNATE_SOURCE_MARKER}"
+                f"{alt_video.suffix}"
             )
-            track_dur = None
-            if instrumental_path and instrumental_path.exists():
-                try:
-                    track_dur = _get_duration(instrumental_path)
-                except Exception:
-                    track_dur = None
-            alt_video, alt_motion, alt_video_url = find_and_verify_music_video(
-                artist=artist,
-                track_title=track.title,
-                tmp_dir=ctx.tmp_dir,
-                expected_duration=track_dur,
-                start_time=video_start_time,
-                video_channel_url=ctx.video_channel_url,
-            )
-            if alt_video:
-                managed_alt_video = ctx.tmp_dir / (
-                    f"video_{track.video_id}{SHORT_ALTERNATE_SOURCE_MARKER}"
-                    f"{alt_video.suffix}"
-                )
-                if alt_video != managed_alt_video:
-                    managed_alt_video.unlink(missing_ok=True)
-                    alt_video.replace(managed_alt_video)
-                source_video = managed_alt_video
-                is_music_vid = True
-                music_video_url = alt_video_url
-            else:
-                logger.info(
-                    "Track %s has no verified music video on YouTube; skipping Short",
-                    track.title,
-                )
-                ctx.history.record_short_status(
-                    track.video_id, ctx.model, "skipped_not_music_video", is_music_video=False
-                )
-                return
+            if alt_video != managed_alt_video:
+                managed_alt_video.unlink(missing_ok=True)
+                alt_video.replace(managed_alt_video)
+            source_video = managed_alt_video
+            is_music_vid = True
+            music_video_url = alt_video_url
         else:
-            logger.info("Track %s detected as music video (diff=%.2f)", track.title, motion_diff)
-            music_video_url = track.url
+            logger.info(
+                "Track %s has no verified music video on YouTube; skipping Short",
+                track.title,
+            )
+            ctx.history.record_short_status(
+                track.video_id, ctx.model, "skipped_not_music_video", is_music_video=False
+            )
+            return
+    else:
+        logger.info("Track %s detected as music video (diff=%.2f)", track.title, motion_diff)
+        music_video_url = track.url
 
     short_video_path = ctx.output_dir / ctx.model / f"{track.video_id}_short.mp4"
     try:
@@ -574,7 +578,7 @@ def _upload_short_track(
         aliases=ctx.label_config.artist_aliases,
         preserve_original_video_title=ctx.preserve_original_video_title,
     )
-    short_title = render_short_title(full_title)
+    short_title = render_short_title(full_title, artist_name=primary_artist)
 
     full_video_url = (
         f"https://www.youtube.com/watch?v={long_form_yt_id}"

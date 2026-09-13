@@ -179,8 +179,8 @@ Used in `label.yml` for video titles, descriptions, and playlist names:
 
 The pipeline can automatically generate and upload 20-second vertical YouTube Shorts teasers (1080×1920 with 20% top/bottom black bars) for instrumental tracks:
 
-- **`upload_short_if_music_video: true`**: Automatically checks whether the source YouTube video is an active music video using low-overhead frame difference motion detection, skipping static album covers and simple visualizers.
-- **`upload_short: true`**: Uploads Shorts for all processed tracks unconditionally.
+- **`upload_short_if_music_video: true`**: Automatically checks whether the source YouTube video is an active music video using the original, unmodified YouTube title plus motion and scene-diversity checks. Explicit audio/visualizer titles and static or flashing artwork are rejected. Missing source metadata fails closed. Fallback videos must match the full song title and artist (or come from the configured official channel); one shared word is never enough.
+- **`upload_short: true`**: Requests Shorts for processed tracks, still subject to the same source validation; it cannot bypass visualizer rejection.
 - **Audio/Video Sync**: Automatically aligns video slicing with the instrumental start trim offset.
 - **Titles & Descriptions**: Automatically formats titles as `<song name> (Instrumental)` and inserts the link to the full instrumental video.
 
@@ -230,3 +230,8 @@ This project is not affiliated with, endorsed by, or sponsored by YouTube or Goo
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+Short teaser titles end with the resolved primary artist in square brackets:
+`Song (Instrumental Teaser) [Artist]`. The suffix is retained within the YouTube
+100-character title limit. Already-posted videos are not retitled automatically.

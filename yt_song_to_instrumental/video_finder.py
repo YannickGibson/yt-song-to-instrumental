@@ -4,7 +4,11 @@ from pathlib import Path
 
 import yt_dlp
 
-from yt_song_to_instrumental.constants import SHORT_DURATION_SECONDS, YOUTUBE_CANONICAL_VIDEO_URL
+from yt_song_to_instrumental.constants import (
+    SHORT_DURATION_SECONDS, YOUTUBE_CANONICAL_VIDEO_URL,
+    VIDEO_MATCH_TOKEN_PATTERN, VIDEO_MATCH_PARENS_PATTERN,
+    VIDEO_MATCH_DASH_PATTERN, VIDEO_MATCH_DEFAULT_ARTIST,
+)
 from yt_song_to_instrumental.downloader import download_source_video
 from yt_song_to_instrumental.video_detector import detect_if_music_video
 
@@ -58,7 +62,26 @@ _channel_video_cache: dict[str, list[dict]] = {}
 
 def _tokenize(text: str) -> list[str]:
     # Extract alphanumeric word tokens lowercased
-    return [w.lower() for w in re.findall(r"[a-zA-Z0-9]+", text) if len(w) > 1]
+    return re.findall(VIDEO_MATCH_TOKEN_PATTERN, text.casefold())
+
+
+def _song_title(title: str, artist: str) -> str:
+    cleaned = re.sub(VIDEO_MATCH_PARENS_PATTERN, VIDEO_MATCH_DEFAULT_ARTIST, title).strip()
+    parts = re.split(VIDEO_MATCH_DASH_PATTERN, cleaned, maxsplit=1)
+    if len(parts) > 1 and _tokenize(parts[0]) == _tokenize(artist):
+        return parts[1]
+    return cleaned
+
+
+def _matches_identity(artist: str, title: str, candidate_title: str, uploader: str) -> bool:
+    title_tokens = set(_tokenize(_song_title(title, artist)))
+    artist_tokens = set(_tokenize(artist))
+    candidate_tokens = set(_tokenize(candidate_title))
+    artist_matches = bool(artist_tokens) and (
+        artist_tokens.issubset(candidate_tokens)
+        or _tokenize(uploader) == _tokenize(artist)
+    )
+    return bool(title_tokens) and title_tokens.issubset(candidate_tokens) and artist_matches
 
 
 def get_channel_videos(channel_url: str) -> list[dict]:
@@ -93,13 +116,14 @@ def search_channel_candidates(
     video_channel_url: str,
     track_title: str,
     expected_duration: float | None = None,
+    artist: str = VIDEO_MATCH_DEFAULT_ARTIST,
 ) -> list[dict]:
     """Search for music video candidates directly within an artist's official channel."""
     entries = get_channel_videos(video_channel_url)
     if not entries:
         return []
 
-    clean_title = re.sub(r"\([^)]*\)", "", track_title).strip()
+    clean_title = _song_title(track_title, artist)
     title_tokens = set(_tokenize(clean_title))
     if not title_tokens:
         return []
@@ -130,7 +154,7 @@ def search_channel_candidates(
 
         # 3. Token check: Title tokens should match
         cand_tokens = set(_tokenize(cand_title))
-        if title_tokens.issubset(cand_tokens) or (len(title_tokens & cand_tokens) >= max(1, len(title_tokens) - 1)):
+        if title_tokens.issubset(cand_tokens):
             priority = 0
             if "official music video" in lower_cand or "official video" in lower_cand:
                 priority = 2
@@ -156,7 +180,7 @@ def search_music_video_candidates(
     max_results: int = 5,
 ) -> list[dict]:
     """Search YouTube globally for potential official music video candidates."""
-    clean_title = re.sub(r"\([^)]*\)", "", track_title).strip()
+    clean_title = _song_title(track_title, artist)
     query = f"ytsearch{max_results}:{artist} {clean_title} official video"
 
     ydl_opts = {
@@ -204,7 +228,7 @@ def search_music_video_candidates(
 
         # 3. Token check
         cand_tokens = set(_tokenize(cand_title))
-        if title_tokens and not (title_tokens & cand_tokens):
+        if not _matches_identity(artist, track_title, cand_title, cand_uploader):
             continue
 
         candidates.append({
@@ -233,7 +257,7 @@ def find_and_verify_music_video(
     candidates = []
     if video_channel_url:
         candidates = search_channel_candidates(
-            video_channel_url, track_title, expected_duration=expected_duration
+            video_channel_url, track_title, expected_duration=expected_duration, artist=artist
         )
 
     if not candidates:

@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -240,6 +241,8 @@ class TestShortsProcessing:
             PipelineReport(),
         )
 
+        assert mock_detect.call_args.kwargs["video_title"] == "Example Artist - Track (Official Video)"
+        assert mock_upload.call_args.args[2].endswith(" [Sample Artist]")
         assert mock_detect.call_args.kwargs["start_time"] == 37.5
         assert mock_render_short.call_args.kwargs["start_time"] == 37.5
         assert mock_render_short.call_args.kwargs["audio_start_time"] == 35.0
@@ -462,3 +465,9 @@ class TestSelectTracks:
         )
 
         assert [track.video_id for track in selected] == ["NewShort01", "OldUpload01"]
+
+
+@pytest.fixture(autouse=True)
+def source_title_metadata():
+    with patch("yt_song_to_instrumental.pipeline.get_source_video_title", return_value="Example Artist - Track (Official Video)") as fetch:
+        yield fetch
