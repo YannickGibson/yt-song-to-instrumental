@@ -179,8 +179,8 @@ class TestRenderShortTitle:
     def test_case_insensitive_instrumental(self):
         from yt_song_to_instrumental.metadata import render_short_title
 
-        title = "vax — I cannot (instrumental)"
-        assert render_short_title(title) == "I cannot (Instrumental Teaser)"
+        title = "Example Artist — Example Track (instrumental)"
+        assert render_short_title(title) == "Example Track (Instrumental Teaser)"
 
     def test_strips_featured_artists(self):
         from yt_song_to_instrumental.metadata import render_short_title
