@@ -15,7 +15,10 @@ from yt_song_to_instrumental.constants import (
 from yt_song_to_instrumental.downloader import DownloadedTrack, download_source_video, download_track_audio, download_tracks
 from yt_song_to_instrumental.history import DownloadRecord, HistoryDB
 from yt_song_to_instrumental.metadata import render_description, render_short_title, render_video_title, strip_topic_suffix
-from yt_song_to_instrumental.playlists import assign_to_playlists, split_artists
+from yt_song_to_instrumental.playlists import (
+    assign_to_playlists, split_artists, sort_tracks_newest_first_preserve_albums,
+    sort_tracks_for_playlist_insertion, retry_playlist_assignments,
+)
 from yt_song_to_instrumental.quality import _get_duration, check_quality
 from yt_song_to_instrumental.separator import get_separator
 from yt_song_to_instrumental.separator.base import SeparatorBackend
@@ -131,6 +134,9 @@ def process_url(
         short_start_seconds=short_start_seconds,
     )
 
+    if not skip_upload:
+        retry_playlist_assignments(service, history, label_config)
+
     target_ids: set[str] | None = None
     if _is_single_video_url(url):
         target_ids = _extract_target_video_ids(url)
@@ -206,80 +212,6 @@ def _extract_target_video_ids(url: str) -> set[str] | None:
     return None
 
 
-def sort_tracks_for_playlist_insertion(
-    tracks: list[DownloadRecord],
-) -> list[DownloadRecord]:
-    """Order uploads so YouTube playlists finish newest-first.
-
-    ``playlistItems.insert`` prepends when no position is specified. Process
-    older releases first and reverse each album's tracklist so repeated
-    prepends leave release groups newest-first and album tracks in 1..N order.
-    Download time is only a fallback for legacy rows without release dates.
-    """
-    if not tracks:
-        return []
-
-    groups: dict[str, list[DownloadRecord]] = {}
-    group_order: list[str] = []
-
-    for t in tracks:
-        clean_album = (t.album or "").strip()
-        key = (
-            f"album:{t.artist.strip().lower()}:{clean_album.lower()}"
-            if clean_album
-            else f"single:{t.video_id}"
-        )
-        if key not in groups:
-            groups[key] = []
-            group_order.append(key)
-        groups[key].append(t)
-
-    def group_sort_key(key: str) -> tuple[str, str]:
-        release_dates = [t.release_date for t in groups[key] if t.release_date]
-        release_date = max(release_dates) if release_dates else ""
-        downloaded_at = max((t.downloaded_at or "") for t in groups[key])
-        return release_date, downloaded_at
-
-    sorted_keys = sorted(group_order, key=group_sort_key)
-
-    result: list[DownloadRecord] = []
-    for k in sorted_keys:
-        result.extend(reversed(groups[k]))
-    return result
-
-
-def sort_tracks_newest_first_preserve_albums(
-    tracks: list[DownloadRecord],
-) -> list[DownloadRecord]:
-    """Order release groups newest-first while preserving album track order."""
-    if not tracks:
-        return []
-
-    groups: dict[str, list[DownloadRecord]] = {}
-    group_order: list[str] = []
-
-    for track in tracks:
-        clean_album = (track.album or "").strip()
-        key = (
-            f"album:{track.artist.strip().lower()}:{clean_album.lower()}"
-            if clean_album
-            else f"single:{track.video_id}"
-        )
-        if key not in groups:
-            groups[key] = []
-            group_order.append(key)
-        groups[key].append(track)
-
-    def group_sort_key(key: str) -> tuple[str, str]:
-        release_dates = [track.release_date for track in groups[key] if track.release_date]
-        release_date = max(release_dates) if release_dates else ""
-        downloaded_at = max((track.downloaded_at or "") for track in groups[key])
-        return release_date, downloaded_at
-
-    sorted_keys = sorted(group_order, key=group_sort_key, reverse=True)
-    return [track for key in sorted_keys for track in groups[key]]
-
-
 def _select_tracks(
     history: HistoryDB,
     model: str,
@@ -293,9 +225,8 @@ def _select_tracks(
     uploaded (unless uploads are skipped). If target_ids is provided, restricts
     selection to those video IDs.
 
-    Returns tracks in insertion order for YouTube's prepend-by-default playlist
-    API, so the resulting playlists are newest-first with album tracks in 1..N
-    order.
+    Schedule newest releases first; playlist insertion independently calculates
+    explicit positions from the same canonical ordering.
     """
     playlist_upload_tracks: list[DownloadRecord] = []
     short_backfill_tracks: list[DownloadRecord] = []

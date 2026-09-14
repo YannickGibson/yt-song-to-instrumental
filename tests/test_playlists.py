@@ -37,6 +37,7 @@ def _make_label_config(
 
 def _make_mock_service(playlist_id: str = "PL_new_123", existing_privacy: str = "public"):
     service = MagicMock()
+    service.playlistItems().list().execute.return_value = {"items": []}
     service.playlists().insert().execute.return_value = {"id": playlist_id}
     # Response shape for _ensure_playlist_privacy's playlists.list() call.
     service.playlists().list().execute.return_value = {
@@ -175,6 +176,7 @@ class TestAssignToPlaylists:
         db.record_playlist("channel", "Test Instrumentals", None, "PL_channel")
         config = _make_label_config()
         service = MagicMock()
+        service.playlistItems().list().execute.return_value = {"items": []}
 
         assign_to_playlists(service, db, config, "yt_vid_123", "Riku Vex", "Quiet Hours", "Riku Vex")
 
@@ -187,6 +189,7 @@ class TestAssignToPlaylists:
         db.record_playlist("channel", "Test Instrumentals", None, "PL_channel")
         config = _make_label_config()
         service = MagicMock()
+        service.playlistItems().list().execute.return_value = {"items": []}
 
         assign_to_playlists(service, db, config, "yt_vid_123", "Riku Vex", "", "Riku Vex")
 
@@ -445,6 +448,7 @@ class TestChannelPlaylist:
         db.record_playlist("artist", "B", None, "PL_b")
         config = _make_label_config()
         service = MagicMock()
+        service.playlistItems().list().execute.return_value = {"items": []}
 
         assign_to_playlists(service, db, config, "yt_vid_1", "A", "", primary_artist="A")
         assign_to_playlists(service, db, config, "yt_vid_2", "B", "", primary_artist="B")

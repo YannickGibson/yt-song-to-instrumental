@@ -2,7 +2,8 @@ import logging
 import re
 
 from yt_song_to_instrumental.config import LabelConfig
-from yt_song_to_instrumental.history import HistoryDB
+from yt_song_to_instrumental.constants import ALBUM_GROUP_PREFIX, SINGLE_GROUP_PREFIX, PLAYLIST_RETRY_BATCH_SIZE
+from yt_song_to_instrumental.history import DownloadRecord, HistoryDB
 from yt_song_to_instrumental.metadata import render_playlist_name, strip_topic_suffix
 from yt_song_to_instrumental.music_metadata import album_is_self_titled_single
 from yt_song_to_instrumental.uploader import add_video_to_playlist
@@ -222,22 +223,95 @@ def assign_to_playlists(
     track_title: str = "",
     create_album_playlists: bool = True,
 ) -> None:
+    history.queue_playlist_assignment(video_id, dict(
+        video_id=video_id, artist=artist, album=album, primary_artist=primary_artist,
+        privacy=privacy, track_title=track_title,
+        create_album_playlists=create_album_playlists,
+    ))
+    source_ranks = {
+        track.video_id: rank for rank, track in enumerate(
+            sort_tracks_newest_first_preserve_albums(history.get_all_downloads())
+        ) if track.release_date and track.downloaded_at
+    }
+    upload_ranks = {
+        upload.youtube_upload_id: source_ranks[upload.video_id]
+        for upload in history.get_all_uploads()
+        if upload.video_id in source_ranks and upload.youtube_upload_id
+    }
     # Every upload also goes into the single per-label "all uploads" playlist —
     # the chronological feed of everything this channel has published.
     channel_playlist_id = get_or_create_channel_playlist(
         service, history, label_config, privacy,
     )
-    add_video_to_playlist(service, channel_playlist_id, video_id)
+    add_video_to_playlist(service, channel_playlist_id, video_id, ranks=upload_ranks)
 
     for resolved in project_playlist_artists(label_config, artist, track_title, primary_artist):
         artist_playlist_id = get_or_create_artist_playlist(
             service, history, label_config, resolved, privacy,
         )
-        add_video_to_playlist(service, artist_playlist_id, video_id)
+        add_video_to_playlist(service, artist_playlist_id, video_id, ranks=upload_ranks)
 
     if create_album_playlists and album and not album_is_self_titled_single(album, track_title):
         album_artist = label_config.artist_aliases.resolve(primary_artist)
         album_playlist_id = get_or_create_album_playlist(
             service, history, label_config, album_artist, album, privacy,
         )
-        add_video_to_playlist(service, album_playlist_id, video_id)
+        add_video_to_playlist(service, album_playlist_id, video_id, ranks=upload_ranks)
+
+    history.complete_playlist_assignment(video_id)
+
+
+def retry_playlist_assignments(service, history: HistoryDB, label_config: LabelConfig) -> None:
+    """Bounded recovery in the existing worker, including restart after partial insertion."""
+    for assignment in history.pending_playlist_assignments(PLAYLIST_RETRY_BATCH_SIZE):
+        try:
+            assign_to_playlists(service, history, label_config, **assignment)
+        except Exception:
+            logger.warning("Playlist assignment remains queued for retry")
+
+
+def sort_tracks_newest_first_preserve_albums(
+    tracks: list[DownloadRecord],
+) -> list[DownloadRecord]:
+    """Order release groups newest-first while preserving album track order (1..N).
+
+    Use the same canonical order for scheduling and positioned insertion.
+    Album track order is currently recorded by discovery timestamp.
+    Release groups are processed newest-first so multi-release playlists
+    (such as artist or channel playlists) showcase newest releases first.
+    """
+    if not tracks:
+        return []
+
+    groups: dict[str, list[DownloadRecord]] = {}
+    group_order: list[str] = []
+
+    for track in tracks:
+        clean_album = (track.album or "").strip()
+        artist_parts = split_artists(track.artist) if track.artist else []
+        primary_artist = artist_parts[0].strip().lower() if artist_parts else ""
+        key = (
+            f"{ALBUM_GROUP_PREFIX}{primary_artist}:{clean_album.lower()}"
+            if clean_album
+            else f"{SINGLE_GROUP_PREFIX}{track.video_id}"
+        )
+        if key not in groups:
+            groups[key] = []
+            group_order.append(key)
+        groups[key].append(track)
+
+    def group_sort_key(key: str) -> tuple[str, str]:
+        release_dates = [track.release_date for track in groups[key] if track.release_date]
+        release_date = max(release_dates) if release_dates else ""
+        downloaded_at = max((track.downloaded_at or "") for track in groups[key])
+        return release_date, downloaded_at
+
+    sorted_keys = sorted(group_order, key=group_sort_key, reverse=True)
+    result: list[DownloadRecord] = []
+    for key in sorted_keys:
+        groups[key].sort(key=lambda t: t.downloaded_at or "")
+        result.extend(groups[key])
+    return result
+
+
+sort_tracks_for_playlist_insertion = sort_tracks_newest_first_preserve_albums

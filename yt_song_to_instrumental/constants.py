@@ -163,3 +163,10 @@ ALL_TEMPLATE_TAGS = (
 # Matches any kebab-case template tag like "<artist-name>". Used by
 # validate_template_tags to detect unsupported tags before upload.
 TEMPLATE_TAG_PATTERN = r"<[a-z][a-z-]*>"
+
+PLAYLIST_PAGE_SIZE = 50
+PLAYLIST_UNKNOWN_ORDER_ERROR = "Playlist insertion deferred: source ordering metadata is missing"
+PLAYLIST_RETRY_BATCH_SIZE = 5
+ALBUM_GROUP_PREFIX = "album:"
+SINGLE_GROUP_PREFIX = "single:"
+PLAYLIST_UNSORTED_ERROR = "Playlist insertion deferred: existing order needs repair"
