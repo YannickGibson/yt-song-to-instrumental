@@ -3,11 +3,14 @@ import logging
 import time
 from bisect import bisect_left
 
+from googleapiclient.errors import HttpError
+
 from yt_song_to_instrumental.constants import (
     PLAYLIST_PAGE_SIZE, PLAYLIST_REPAIR_MAX_MOVES, PLAYLIST_VERIFY_DELAYS,
     PLAYLIST_REPAIR_RETRY_SECONDS,
 )
 from yt_song_to_instrumental.playlists import upload_ranks
+from yt_song_to_instrumental.uploader import _extract_error_reason
 from yt_song_to_instrumental.youtube_quota import QuotaLedger, QuotaReserved
 
 logger = logging.getLogger(__name__)
@@ -117,6 +120,7 @@ def repair_due(service, history):
         unknown = 0
         remaining = 0
         status = 'complete'
+        blocked = False
         ranks = upload_ranks(history, ledger)
         rows = history._conn.execute(
             "SELECT youtube_playlist_id FROM playlists ORDER BY CASE playlist_type "
@@ -158,14 +162,24 @@ def repair_due(service, history):
                         # Count attempted moves before sending, even on ambiguous errors.
                         used_moves += 1
                         db.execute('UPDATE repair_runs SET moves=? WHERE day=?', (used_moves, day))
-                    service.playlistItems().update(part='snippet', body={
-                        'id': item_id,
-                        'snippet': {
-                            'playlistId': playlist_id,
-                            'resourceId': item['snippet']['resourceId'],
-                            'position': position,
-                        },
-                    }).execute()
+                    try:
+                        service.playlistItems().update(part='snippet', body={
+                            'id': item_id,
+                            'snippet': {
+                                'playlistId': playlist_id,
+                                'resourceId': item['snippet']['resourceId'],
+                                'position': position,
+                            },
+                        }).execute()
+                    except HttpError as error:
+                        if _extract_error_reason(error) != 'manualSortRequired':
+                            raise
+                        blocked = True
+                        with ledger.connect() as db:
+                            db.execute('INSERT OR REPLACE INTO repair_blocked VALUES (?, ?, ?)',
+                                       (playlist_id, 'manualSortRequired', day))
+                            db.execute("UPDATE repair_events SET state='rejected' WHERE id=?", (event,))
+                        break
                     current_ids.remove(item_id)
                     current_ids.insert(position, item_id)
                     with ledger.connect() as db:
@@ -185,6 +199,7 @@ def repair_due(service, history):
                                    (day, playlist_id))
                 if current_ids == target_ids:
                     with ledger.connect() as db:
+                        db.execute('DELETE FROM repair_blocked WHERE playlist_id=?', (playlist_id,))
                         db.execute("UPDATE repair_events SET state='verified' WHERE playlist_id=? AND state='applied'", (playlist_id,))
                         db.execute("UPDATE repair_events SET state='reconciled' WHERE playlist_id=? AND state='intent'", (playlist_id,))
                 checked += 1
@@ -195,6 +210,8 @@ def repair_due(service, history):
                                (playlist_id, playlist_remaining, ledger.now().isoformat()))
                 if status in ('daily_cap', 'day_changed'):
                     break
+            if blocked and status == 'complete':
+                status = 'blocked'
         except QuotaReserved:
             status = 'quota_cap'
         except Exception as error:

@@ -177,3 +177,25 @@ def test_eventually_consistent_readback_does_not_repeat_writes(tmp_path, monkeyp
     with ledger.connect() as db:
         assert db.execute('select status from repair_runs').fetchone()[0] == 'complete'
         assert db.execute("select count(*) from repair_events where state='verified'").fetchone()[0] == 2
+
+
+def test_manual_sort_block_does_not_starve_other_playlists(tmp_path):
+    from tests.test_uploader import _make_http_error
+    ledger = QuotaLedger(tmp_path / 'quota.db')
+    history = seeded_history(tmp_path, 3)
+    history.record_playlist('artist', 'Other', None, 'working')
+    api = FakeAPI(ledger, ['v002', 'v001', 'v000'])
+    actual_update = api.update
+    def selective_update(part, body):
+        if body['snippet']['playlistId'] == 'playlist':
+            result = MagicMock()
+            result.execute.side_effect = _make_http_error('manualSortRequired')
+            return result
+        return actual_update(part, body)
+    api.update = selective_update
+    repair_due(api, history)
+    assert api.writes == 2
+    with ledger.connect() as db:
+        assert db.execute('select reason from repair_blocked').fetchone()[0] == 'manualSortRequired'
+        assert db.execute('select status from repair_runs').fetchone()[0] == 'blocked'
+        assert db.execute("select remaining from repair_playlists where playlist_id='working'").fetchone()[0] == 0
