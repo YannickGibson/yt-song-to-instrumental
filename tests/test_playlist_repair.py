@@ -150,3 +150,30 @@ def test_ambiguous_write_recovers_by_reading_remote_state(tmp_path):
     repair_due(api, history)
     assert api.ids == ['v000', 'v001', 'v002']
     assert api.writes == 2
+
+
+def test_eventually_consistent_readback_does_not_repeat_writes(tmp_path, monkeypatch):
+    ledger = QuotaLedger(tmp_path / 'quota.db')
+    history = seeded_history(tmp_path, 3)
+    api = FakeAPI(ledger, ['v002', 'v001', 'v000'])
+    original = list(api.ids)
+    actual_list = api.list
+    stale = [True]
+    def list_with_stale_read(**kwargs):
+        request = actual_list(**kwargs)
+        execute = request.execute
+        def response():
+            actual = execute()
+            if api.writes and stale[0]:
+                stale[0] = False
+                return {'items': [item(i) for i in original]}
+            return actual
+        request.execute = response
+        return request
+    api.list = list_with_stale_read
+    monkeypatch.setattr('yt_song_to_instrumental.playlist_repair.time.sleep', lambda _: None)
+    repair_due(api, history)
+    assert api.writes == 2
+    with ledger.connect() as db:
+        assert db.execute('select status from repair_runs').fetchone()[0] == 'complete'
+        assert db.execute("select count(*) from repair_events where state='verified'").fetchone()[0] == 2

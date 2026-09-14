@@ -1,8 +1,12 @@
 """Budgeted, restart-safe playlist repair inside the existing managed worker."""
 import logging
+import time
 from bisect import bisect_left
 
-from yt_song_to_instrumental.constants import PLAYLIST_PAGE_SIZE, PLAYLIST_REPAIR_MAX_MOVES
+from yt_song_to_instrumental.constants import (
+    PLAYLIST_PAGE_SIZE, PLAYLIST_REPAIR_MAX_MOVES, PLAYLIST_VERIFY_DELAYS,
+    PLAYLIST_REPAIR_RETRY_SECONDS,
+)
 from yt_song_to_instrumental.playlists import upload_ranks
 from yt_song_to_instrumental.youtube_quota import QuotaLedger, QuotaReserved
 
@@ -99,7 +103,11 @@ def repair_due(service, history):
     with ledger.lock(), ledger.repair_lane():
         with ledger.connect() as db:
             row = db.execute('SELECT status, moves FROM repair_runs WHERE day=?', (day,)).fetchone()
-            if row and row[0] not in ('running',):
+            if row and row[0] == 'retry_pending':
+                retry = db.execute('SELECT not_before FROM repair_retry WHERE day=?', (day,)).fetchone()
+                if retry and ledger.now().timestamp() < retry[0]:
+                    return
+            elif row and row[0] != 'running':
                 return
             used_moves = row[1] if row else 0
             # Resume by rereading live state, never by replaying an old position.
@@ -164,12 +172,21 @@ def repair_due(service, history):
                         db.execute('UPDATE repair_events SET state=? WHERE id=?', ('applied', event))
                 # Verify the exact membership and order after every changed playlist/slice.
                 if moves:
-                    actual = list_items(service, playlist_id)
-                    if [item['id'] for item in actual] != current_ids:
+                    for delay in PLAYLIST_VERIFY_DELAYS:
+                        if delay:
+                            time.sleep(delay)
+                        actual = list_items(service, playlist_id)
+                        if [item['id'] for item in actual] == current_ids:
+                            break
+                    else:
                         raise RuntimeError('Playlist readback differs from the applied move plan')
                     with ledger.connect() as db:
                         db.execute("UPDATE repair_events SET state='verified' WHERE day=? AND playlist_id=? AND state='applied'",
                                    (day, playlist_id))
+                if current_ids == target_ids:
+                    with ledger.connect() as db:
+                        db.execute("UPDATE repair_events SET state='verified' WHERE playlist_id=? AND state='applied'", (playlist_id,))
+                        db.execute("UPDATE repair_events SET state='reconciled' WHERE playlist_id=? AND state='intent'", (playlist_id,))
                 checked += 1
                 playlist_remaining = len(plan_moves(current_ids, target_ids))
                 remaining += playlist_remaining
@@ -181,7 +198,10 @@ def repair_due(service, history):
         except QuotaReserved:
             status = 'quota_cap'
         except Exception as error:
-            status = 'retry_next_day'
+            status = 'retry_pending'
+            with ledger.connect() as db:
+                db.execute('INSERT OR REPLACE INTO repair_retry VALUES (?, ?)',
+                           (day, ledger.now().timestamp() + PLAYLIST_REPAIR_RETRY_SECONDS))
             logger.warning('Playlist repair paused: %s', type(error).__name__)
         with ledger.connect() as db:
             db.execute('UPDATE repair_runs SET status=?, remaining=?, unknown=?, checked=? WHERE day=?',

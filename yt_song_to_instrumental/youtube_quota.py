@@ -36,6 +36,7 @@ class QuotaLedger:
                 CREATE TABLE IF NOT EXISTS quota_usage (
                     day TEXT, bucket TEXT, lane TEXT, units INTEGER NOT NULL,
                     PRIMARY KEY(day, bucket, lane));
+                CREATE TABLE IF NOT EXISTS repair_retry (day TEXT PRIMARY KEY, not_before REAL);
                 CREATE TABLE IF NOT EXISTS repair_runs (
                     day TEXT PRIMARY KEY, status TEXT NOT NULL, moves INTEGER NOT NULL,
                     remaining INTEGER, unknown INTEGER, checked INTEGER);
