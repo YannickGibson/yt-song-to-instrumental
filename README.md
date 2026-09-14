@@ -235,3 +235,6 @@ MIT — see [LICENSE](LICENSE).
 Short teaser titles end with the resolved primary artist in square brackets:
 `Song (Instrumental Teaser) [Artist]`. The suffix is retained within the YouTube
 100-character title limit. Already-posted videos are not retitled automatically.
+
+By default, Shorts start at 10% of the source video duration. Explicit per-request
+offsets take precedence; audio offsets account for trimmed leading silence.

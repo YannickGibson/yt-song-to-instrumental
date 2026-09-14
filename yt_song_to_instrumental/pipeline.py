@@ -11,6 +11,8 @@ from yt_song_to_instrumental.constants import (
     MODEL_DISPLAY_NAMES,
     SHORT_ALTERNATE_SOURCE_MARKER,
     SHORT_DURATION_SECONDS,
+    SHORT_START_FRACTION,
+    SHORT_DEFAULT_START_SECONDS,
     SHORT_SOURCE_METADATA_UNAVAILABLE,
 )
 from yt_song_to_instrumental.downloader import DownloadedTrack, download_source_video, download_track_audio, download_tracks
@@ -74,7 +76,7 @@ class _RunContext:
     trim_start_times: dict[str, float] = field(default_factory=dict)
     shorts_only: bool = False
     force_short: bool = False
-    short_start_seconds: float = 0.0
+    short_start_seconds: float | None = None
 
 
 def process_url(
@@ -102,7 +104,7 @@ def process_url(
     separator: SeparatorBackend | None = None,
     before_track: Callable[[], None] | None = None,
     force_short: bool = False,
-    short_start_seconds: float = 0.0,
+    short_start_seconds: float | None = None,
 ) -> PipelineReport:
     report = PipelineReport()
     model = model_name or config.separator_model
@@ -494,7 +496,29 @@ def _upload_short_track(
         elif track.video_id in ctx.trim_start_times:
             start_time = ctx.trim_start_times[track.video_id]
 
-    video_start_time = start_time + ctx.short_start_seconds
+    video_dur = None
+    if source_video and source_video.exists():
+        try:
+            video_dur = _get_duration(source_video)
+        except Exception:
+            video_dur = None
+    if video_dur is None and instrumental_path and instrumental_path.exists():
+        try:
+            video_dur = _get_duration(instrumental_path) + start_time
+        except Exception:
+            video_dur = None
+
+    if ctx.short_start_seconds is not None:
+        audio_start_time = ctx.short_start_seconds
+        video_start_time = start_time + audio_start_time
+    else:
+        if video_dur is not None and video_dur > 0.0:
+            video_start_time = video_dur * SHORT_START_FRACTION
+            audio_start_time = max(SHORT_DEFAULT_START_SECONDS, video_start_time - start_time)
+        else:
+            video_start_time = start_time
+            audio_start_time = SHORT_DEFAULT_START_SECONDS
+
     is_music_vid = None
     music_video_url = None
     is_music_vid, motion_diff = detect_if_music_video(
@@ -554,7 +578,7 @@ def _upload_short_track(
             instrumental_path,
             short_video_path,
             start_time=video_start_time,
-            audio_start_time=ctx.short_start_seconds,
+            audio_start_time=audio_start_time,
             duration=SHORT_DURATION_SECONDS,
         )
     except Exception as e:
