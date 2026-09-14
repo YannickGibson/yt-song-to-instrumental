@@ -7,6 +7,7 @@ from yt_song_to_instrumental.history import DownloadRecord, HistoryDB
 from yt_song_to_instrumental.metadata import render_playlist_name, strip_topic_suffix
 from yt_song_to_instrumental.music_metadata import album_is_self_titled_single
 from yt_song_to_instrumental.uploader import add_video_to_playlist
+from yt_song_to_instrumental.youtube_quota import QuotaLedger
 
 logger = logging.getLogger(__name__)
 
@@ -228,35 +229,35 @@ def assign_to_playlists(
         privacy=privacy, track_title=track_title,
         create_album_playlists=create_album_playlists,
     ))
-    source_ranks = {
-        track.video_id: rank for rank, track in enumerate(
-            sort_tracks_newest_first_preserve_albums(history.get_all_downloads())
-        ) if track.release_date and track.downloaded_at
-    }
-    upload_ranks = {
-        upload.youtube_upload_id: source_ranks[upload.video_id]
-        for upload in history.get_all_uploads()
-        if upload.video_id in source_ranks and upload.youtube_upload_id
-    }
+    ledger = getattr(service, 'quota_ledger', None)
+    if not isinstance(ledger, QuotaLedger):
+        ledger = None
+    ranks = upload_ranks(history, ledger)
+    anchors = set()
+    if ledger is not None:
+        with ledger.connect() as db:
+            anchors = {row[0] for row in db.execute(
+                "SELECT youtube_video_id FROM repair_metadata WHERE source_video_id=''"
+            )}
     # Every upload also goes into the single per-label "all uploads" playlist —
     # the chronological feed of everything this channel has published.
     channel_playlist_id = get_or_create_channel_playlist(
         service, history, label_config, privacy,
     )
-    add_video_to_playlist(service, channel_playlist_id, video_id, ranks=upload_ranks)
+    add_video_to_playlist(service, channel_playlist_id, video_id, ranks=ranks, anchors=anchors)
 
     for resolved in project_playlist_artists(label_config, artist, track_title, primary_artist):
         artist_playlist_id = get_or_create_artist_playlist(
             service, history, label_config, resolved, privacy,
         )
-        add_video_to_playlist(service, artist_playlist_id, video_id, ranks=upload_ranks)
+        add_video_to_playlist(service, artist_playlist_id, video_id, ranks=ranks, anchors=anchors)
 
     if create_album_playlists and album and not album_is_self_titled_single(album, track_title):
         album_artist = label_config.artist_aliases.resolve(primary_artist)
         album_playlist_id = get_or_create_album_playlist(
             service, history, label_config, album_artist, album, privacy,
         )
-        add_video_to_playlist(service, album_playlist_id, video_id, ranks=upload_ranks)
+        add_video_to_playlist(service, album_playlist_id, video_id, ranks=ranks, anchors=anchors)
 
     history.complete_playlist_assignment(video_id)
 
@@ -315,3 +316,20 @@ def sort_tracks_newest_first_preserve_albums(
 
 
 sort_tracks_for_playlist_insertion = sort_tracks_newest_first_preserve_albums
+
+
+def upload_ranks(history, ledger=None):
+    sources = {
+        track.video_id: index for index, track in enumerate(
+            sort_tracks_newest_first_preserve_albums(history.get_all_downloads())
+        ) if track.release_date and track.downloaded_at
+    }
+    ranks = {upload.youtube_upload_id: sources[upload.video_id]
+             for upload in history.get_all_uploads()
+             if upload.video_id in sources and upload.youtube_upload_id}
+    if ledger is not None:
+        with ledger.connect() as db:
+            for video, source in db.execute('SELECT youtube_video_id, source_video_id FROM repair_metadata'):
+                if source in sources:
+                    ranks[video] = sources[source]
+    return ranks

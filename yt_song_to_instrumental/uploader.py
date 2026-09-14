@@ -20,6 +20,8 @@ from yt_song_to_instrumental.constants import (
     YOUTUBE_UPLOAD_SCOPE,
 )
 
+from yt_song_to_instrumental.youtube_quota import QuotaLedger, metered_request_builder, quota_path
+
 logger = logging.getLogger(__name__)
 
 SCOPES = [YOUTUBE_UPLOAD_SCOPE, YOUTUBE_SCOPE]
@@ -47,7 +49,10 @@ def authenticate(client_secrets_file: str, token_file: str) -> Resource:
         with open(token_file, "w") as f:
             f.write(creds.to_json())
 
-    return build("youtube", "v3", credentials=creds)
+    ledger = QuotaLedger(quota_path(token_file))
+    service = build("youtube", "v3", credentials=creds, requestBuilder=metered_request_builder(ledger))
+    service.quota_ledger = ledger
+    return service
 
 
 def _extract_error_reason(err: HttpError) -> str:
@@ -167,6 +172,7 @@ def list_channel_videos(service, channel_id: str, max_results: int = 500) -> set
 
 def add_video_to_playlist(
     service, playlist_id: str, video_id: str, *, ranks: dict[str, int] | None = None,
+    anchors: set[str] | None = None,
 ) -> None:
     """Read all pages before writing; never fall back to blind append on errors.
 
@@ -190,13 +196,13 @@ def add_video_to_playlist(
         return
     position = len(video_ids)
     if ranks is not None and video_ids:
-        if video_id not in ranks or any(existing not in ranks for existing in video_ids):
+        if video_id not in ranks or any(existing not in ranks and existing not in (anchors or set()) for existing in video_ids):
             raise ValueError(PLAYLIST_UNKNOWN_ORDER_ERROR)
-        existing_ranks = [ranks[existing] for existing in video_ids]
+        existing_ranks = [ranks[existing] for existing in video_ids if existing in ranks]
         if existing_ranks != sorted(existing_ranks):
             raise ValueError(PLAYLIST_UNSORTED_ERROR)
         position = next(
-            (index for index, existing in enumerate(video_ids) if ranks[existing] > ranks[video_id]),
+            (index for index, existing in enumerate(video_ids) if existing in ranks and ranks[existing] > ranks[video_id]),
             len(video_ids),
         )
     body = {

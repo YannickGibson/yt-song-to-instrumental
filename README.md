@@ -230,3 +230,26 @@ This project is not affiliated with, endorsed by, or sponsored by YouTube or Goo
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+### Resumable playlist repair
+
+The managed worker repairs playlists at startup and between tracks. Repair is
+bounded to 75 attempted moves and 4,000 general API quota units per Pacific day.
+Normal general-API calls have a separate 5,500-unit ceiling, leaving 500 units
+of safety headroom against the documented default allocation. Upload and search
+initiations are counted in their dedicated buckets (90 calls each). These are
+conservative local limits, not a claim about the project's actual allocation.
+All managed callers must use the same `QuotaLedger` and request builder; external
+clients are not observable by this local ledger. API quota errors pause repairs.
+
+`data/youtube-quota.db`, beside the OAuth token's directory, holds daily counters,
+repair progress and write intents. Playlist writes are serialized across clients.
+A fresh live read precedes each resumed plan, and changed playlists are read back
+after each slice. Ambiguous writes are never retried using stale positions.
+Unknown source items are preserved at durable anchor positions, not deleted or
+assigned invented release dates. Playlist-item IDs, not video IDs, identify moves
+so existing duplicates and membership remain intact.
+
+The same positioned-insert guard checks known release order and queues additions
+to unrepaired playlists. Repairs reserve quota even when uploads run continuously.
+Keep the quota database private and persistent across restarts.

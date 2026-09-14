@@ -19,6 +19,7 @@ from yt_song_to_instrumental.playlists import (
     assign_to_playlists, split_artists, sort_tracks_newest_first_preserve_albums,
     sort_tracks_for_playlist_insertion, retry_playlist_assignments,
 )
+from yt_song_to_instrumental.playlist_repair import repair_due
 from yt_song_to_instrumental.quality import _get_duration, check_quality
 from yt_song_to_instrumental.separator import get_separator
 from yt_song_to_instrumental.separator.base import SeparatorBackend
@@ -135,6 +136,7 @@ def process_url(
     )
 
     if not skip_upload:
+        repair_due(service, history)
         retry_playlist_assignments(service, history, label_config)
 
     target_ids: set[str] | None = None
@@ -163,6 +165,8 @@ def process_url(
         shorts_only=shorts_only,
         force_short=force_short,
     ):
+        if not skip_upload:
+            repair_due(service, history)
         if before_track is not None:
             before_track()
         artist = artist_override or track.artist

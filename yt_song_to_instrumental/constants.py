@@ -170,3 +170,14 @@ PLAYLIST_RETRY_BATCH_SIZE = 5
 ALBUM_GROUP_PREFIX = "album:"
 SINGLE_GROUP_PREFIX = "single:"
 PLAYLIST_UNSORTED_ERROR = "Playlist insertion deferred: existing order needs repair"
+
+YOUTUBE_QUOTA_FILENAME = "youtube-quota.db"
+YOUTUBE_QUOTA_TIMEZONE = "America/Los_Angeles"
+YOUTUBE_QUOTA_NORMAL = 5500
+YOUTUBE_QUOTA_REPAIR = 4000
+YOUTUBE_QUOTA_DEDICATED = 90
+YOUTUBE_API_READ_COST = 1
+YOUTUBE_API_WRITE_COST = 50
+YOUTUBE_QUOTA_TIMEOUT = 30
+YOUTUBE_QUOTA_ERROR = "Daily caller budget exhausted; reserved repair/upload quota remains protected"
+PLAYLIST_REPAIR_MAX_MOVES = 75
