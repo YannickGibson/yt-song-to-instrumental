@@ -15,6 +15,8 @@ from yt_song_to_instrumental.constants import (
     TAG_TRACK_TITLE,
     TAG_VIDEO_TITLE,
     SHORT_TITLE_SUFFIX,
+    SHORT_ARTIST_SUFFIX_TEMPLATE,
+    SHORT_ARTIST_MAX_LENGTH,
     TEMPLATE_TAG_PATTERN,
     TITLE_PARENTHETICAL_PATTERN,
     TOPIC_SUFFIX_PATTERN,
@@ -195,7 +197,7 @@ def render_title(
 _TOPIC_PREFIX_RE = re.compile(r"^\s*.*?\s*[\-–—]\s*topic\s*[\-–—]\s*", re.IGNORECASE)
 
 
-def render_short_title(video_title: str) -> str:
+def render_short_title(video_title: str, artist_name: str = "") -> str:
     """Format YouTube Short title by extracting the song name (removing all artists,
     features, parentheticals, and teaser markers) and appending the Short title suffix."""
     cleaned = _strip_all_parens(video_title)
@@ -207,7 +209,13 @@ def render_short_title(video_title: str) -> str:
     song_name = _collapse_whitespace(cleaned).strip()
     if not song_name:
         song_name = _collapse_whitespace(_strip_all_parens(video_title)).strip() or video_title.strip()
-    return _truncate(_collapse_whitespace(f"{song_name} {SHORT_TITLE_SUFFIX}"))
+    teaser = _collapse_whitespace(f"{song_name} {SHORT_TITLE_SUFFIX}")
+    artist_name = _collapse_whitespace(strip_topic_suffix(artist_name)).strip()
+    if artist_name:
+        artist_name = artist_name[:SHORT_ARTIST_MAX_LENGTH]
+        suffix = SHORT_ARTIST_SUFFIX_TEMPLATE.format(artist=artist_name)
+        return teaser[:YOUTUBE_TITLE_MAX_LENGTH - len(suffix)].rstrip() + suffix
+    return _truncate(teaser)
 
 
 def render_description(
