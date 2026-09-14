@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -77,6 +78,11 @@ class PriorityRequest:
 
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS pending_playlist_assignments (
+    youtube_video_id TEXT PRIMARY KEY,
+    assignment_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS downloads (
     video_id TEXT PRIMARY KEY,
     url TEXT NOT NULL,
@@ -250,6 +256,27 @@ class HistoryDB:
         if row is None:
             return None
         return DownloadRecord(**dict(row))
+
+    def queue_playlist_assignment(self, youtube_video_id: str, assignment: dict) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO pending_playlist_assignments VALUES (?, ?)",
+            (youtube_video_id, json.dumps(assignment)),
+        )
+        self._conn.commit()
+
+    def complete_playlist_assignment(self, youtube_video_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM pending_playlist_assignments WHERE youtube_video_id = ?",
+            (youtube_video_id,),
+        )
+        self._conn.commit()
+
+    def pending_playlist_assignments(self, limit: int) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT assignment_json FROM pending_playlist_assignments ORDER BY rowid LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [json.loads(row["assignment_json"]) for row in rows]
 
     def get_all_downloads(self) -> list[DownloadRecord]:
         rows = self._conn.execute("SELECT * FROM downloads ORDER BY downloaded_at").fetchall()

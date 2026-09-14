@@ -395,7 +395,7 @@ class TestShortsProcessing:
 
 
 class TestSortTracksForPlaylistInsertion:
-    def test_orders_uploads_for_prepend_and_preserves_final_album_track_order(self):
+    def test_orders_newest_releases_and_preserves_album_track_order(self):
         from yt_song_to_instrumental.history import DownloadRecord
         from yt_song_to_instrumental.pipeline import sort_tracks_for_playlist_insertion
 
@@ -413,12 +413,12 @@ class TestSortTracksForPlaylistInsertion:
         ]
 
         insertion_order = sort_tracks_for_playlist_insertion(tracks)
-        expected_insertion_ids = ["b3", "b2", "b1", "s1", "a3", "a2", "a1"]
+        expected_insertion_ids = ["a1", "a2", "a3", "s1", "b1", "b2", "b3"]
         assert [t.video_id for t in insertion_order] == expected_insertion_ids
 
         final_playlist_ids: list[str] = []
         for track in insertion_order:
-            final_playlist_ids.insert(0, track.video_id)
+            final_playlist_ids.append(track.video_id)
         assert final_playlist_ids == ["a1", "a2", "a3", "s1", "b1", "b2", "b3"]
 
     def test_release_date_wins_over_download_time(self):
@@ -438,7 +438,7 @@ class TestSortTracksForPlaylistInsertion:
 
         insertion_order = sort_tracks_for_playlist_insertion(tracks)
 
-        assert [t.video_id for t in insertion_order] == ["old", "new"]
+        assert [t.video_id for t in insertion_order] == ["new", "old"]
 
 
 class TestSelectTracks:

@@ -9,6 +9,9 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from yt_song_to_instrumental.constants import (
+    PLAYLIST_UNSORTED_ERROR,
+    PLAYLIST_PAGE_SIZE,
+    PLAYLIST_UNKNOWN_ORDER_ERROR,
     RETRYABLE_UPLOAD_REASONS,
     UPLOAD_CHUNK_SIZE_BYTES,
     UPLOAD_RETRY_BACKOFF_SCHEDULE_SECONDS,
@@ -16,6 +19,8 @@ from yt_song_to_instrumental.constants import (
     YOUTUBE_SCOPE,
     YOUTUBE_UPLOAD_SCOPE,
 )
+
+from yt_song_to_instrumental.youtube_quota import QuotaLedger, metered_request_builder, quota_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +49,10 @@ def authenticate(client_secrets_file: str, token_file: str) -> Resource:
         with open(token_file, "w") as f:
             f.write(creds.to_json())
 
-    return build("youtube", "v3", credentials=creds)
+    ledger = QuotaLedger(quota_path(token_file))
+    service = build("youtube", "v3", credentials=creds, requestBuilder=metered_request_builder(ledger))
+    service.quota_ledger = ledger
+    return service
 
 
 def _extract_error_reason(err: HttpError) -> str:
@@ -162,23 +170,46 @@ def list_channel_videos(service, channel_id: str, max_results: int = 500) -> set
     return titles
 
 
-def add_video_to_playlist(service, playlist_id: str, video_id: str) -> None:
-    try:
-        res = service.playlistItems().list(playlistId=playlist_id, part="snippet", maxResults=50).execute()
-        for item in res.get("items", []):
-            if item.get("snippet", {}).get("resourceId", {}).get("videoId") == video_id:
-                logger.info("Video %s is already in playlist %s; skipping duplicate insertion", video_id, playlist_id)
-                return
-    except Exception as e:
-        logger.warning("Could not check existing items for playlist %s: %s", playlist_id, e)
+def add_video_to_playlist(
+    service, playlist_id: str, video_id: str, *, ranks: dict[str, int] | None = None,
+    anchors: set[str] | None = None,
+) -> None:
+    """Read all pages before writing; never fall back to blind append on errors.
 
+    Positioned insertion preserves canonical order on sorted playlists regardless
+    of upload timing. Existing inversions require the separate repair campaign.
+    Unknown existing items block insertion rather than inventing a release date.
+    """
+    items = []
+    page_token = None
+    while True:
+        response = service.playlistItems().list(
+            playlistId=playlist_id, part="snippet", maxResults=PLAYLIST_PAGE_SIZE,
+            pageToken=page_token,
+        ).execute()
+        items.extend(response["items"])
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    video_ids = [item["snippet"]["resourceId"]["videoId"] for item in items]
+    if video_id in video_ids:
+        return
+    position = len(video_ids)
+    if ranks is not None and video_ids:
+        if video_id not in ranks or any(existing not in ranks and existing not in (anchors or set()) for existing in video_ids):
+            raise ValueError(PLAYLIST_UNKNOWN_ORDER_ERROR)
+        existing_ranks = [ranks[existing] for existing in video_ids if existing in ranks]
+        if existing_ranks != sorted(existing_ranks):
+            raise ValueError(PLAYLIST_UNSORTED_ERROR)
+        position = next(
+            (index for index, existing in enumerate(video_ids) if existing in ranks and ranks[existing] > ranks[video_id]),
+            len(video_ids),
+        )
     body = {
         "snippet": {
             "playlistId": playlist_id,
-            "resourceId": {
-                "kind": "youtube#video",
-                "videoId": video_id,
-            },
+            "position": position,
+            "resourceId": {"kind": "youtube#video", "videoId": video_id},
         },
     }
     service.playlistItems().insert(part="snippet", body=body).execute()

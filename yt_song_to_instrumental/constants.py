@@ -163,3 +163,23 @@ ALL_TEMPLATE_TAGS = (
 # Matches any kebab-case template tag like "<artist-name>". Used by
 # validate_template_tags to detect unsupported tags before upload.
 TEMPLATE_TAG_PATTERN = r"<[a-z][a-z-]*>"
+
+PLAYLIST_PAGE_SIZE = 50
+PLAYLIST_UNKNOWN_ORDER_ERROR = "Playlist insertion deferred: source ordering metadata is missing"
+PLAYLIST_RETRY_BATCH_SIZE = 5
+ALBUM_GROUP_PREFIX = "album:"
+SINGLE_GROUP_PREFIX = "single:"
+PLAYLIST_UNSORTED_ERROR = "Playlist insertion deferred: existing order needs repair"
+
+YOUTUBE_QUOTA_FILENAME = "youtube-quota.db"
+YOUTUBE_QUOTA_TIMEZONE = "America/Los_Angeles"
+YOUTUBE_QUOTA_NORMAL = 5500
+YOUTUBE_QUOTA_REPAIR = 4000
+YOUTUBE_QUOTA_DEDICATED = 90
+YOUTUBE_API_READ_COST = 1
+YOUTUBE_API_WRITE_COST = 50
+YOUTUBE_QUOTA_TIMEOUT = 30
+YOUTUBE_QUOTA_ERROR = "Daily caller budget exhausted; reserved repair/upload quota remains protected"
+PLAYLIST_REPAIR_MAX_MOVES = 75
+PLAYLIST_VERIFY_DELAYS = (0, 1, 2, 4)
+PLAYLIST_REPAIR_RETRY_SECONDS = 900
