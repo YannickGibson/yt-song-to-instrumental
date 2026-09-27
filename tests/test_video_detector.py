@@ -1,11 +1,12 @@
 import tempfile
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 import pytest
 from PIL import Image, ImageDraw
 import numpy as np
 
-from yt_song_to_instrumental.video_detector import detect_if_music_video
+from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title, _frame_correlation
 
 
 def _create_synthetic_video(output_path: Path, is_static: bool, duration: float = 4.0, fps: int = 10):
@@ -18,9 +19,9 @@ def _create_synthetic_video(output_path: Path, is_static: bool, duration: float 
                 draw = ImageDraw.Draw(img)
                 draw.ellipse([70, 35, 90, 55], fill=(200, 200, 200))
             else:
-                # Flashing alternating background colors across seconds
-                color_val = 255 if (i // 10) % 2 == 0 else 0
-                img = Image.new("RGB", (160, 90), color=(color_val, color_val, color_val))
+                rng = np.random.default_rng(i // 10)
+                pixels = rng.integers(0, 256, (3, 4, 3), dtype=np.uint8)
+                img = Image.fromarray(pixels).resize((160, 90), Image.Resampling.NEAREST)
             img.save(frame_dir / f"frame_{i:04d}.png")
 
         cmd = [
@@ -112,3 +113,21 @@ def test_audio_indicator_in_title_skips(tmp_path):
         is_mv, diff = detect_if_music_video(video_path, video_title=title)
         assert is_mv is False
         assert diff == 0.0
+
+
+def test_uniform_flashes_are_not_scene_changes():
+    assert _frame_correlation(np.zeros((10, 10)), np.full((10, 10), 255)) == 1.0
+
+
+def test_raw_source_title_retains_visualizer_indicator():
+    service = MagicMock()
+    service.videos.return_value.list.return_value.execute.return_value = {
+        "items": [{"id": "source", "snippet": {"title": "Artist - Track (Official Visualizer)"}}]}
+    assert get_source_video_title(service, "source") == "Artist - Track (Official Visualizer)"
+    assert get_source_video_title(service, "other") is None
+
+
+def test_raw_source_title_fails_closed():
+    service = MagicMock()
+    service.videos.return_value.list.return_value.execute.side_effect = RuntimeError()
+    assert get_source_video_title(service, "source") is None
