@@ -52,17 +52,25 @@
 ## Model memory requirements
 When adding a new separation model backend, document its requirements here AND in README.md:
 
-| Model | Min RAM | GPU Required | GPU VRAM | Notes |
+| Model | RAM guidance | GPU Required | GPU VRAM | Notes |
 |-------|---------|-------------|----------|-------|
 | HTDemucs | 4 GB | No (but recommended) | 2 GB+ | 4-stem demucs v4. Measured ~7x realtime on Pi 4 (4 GB). |
 | Inst_HQ_4 | 3 GB | No (but recommended) | 1 GB+ | UVR-MDX-NET via ONNX (audio-separator). 2-stem vocals/instrumental. Cleaner vocal removal than HTDemucs but ~12x realtime on Pi 4 — best on x86/GPU. |
-| MelBand RoFormer INSTV7N | 8 GB budget estimate; minimum unverified | MPS required | Shared system memory | `mel_gabox_instv7n`: native FP16 with protected FP32 parameters, overlap 4, model-default segments, two CPU threads. |
+| MelBand RoFormer INSTV7N | Observed worker peak ~3.5 GiB; system minimum unverified | MPS required | Shared system memory | `mel_gabox_instv7n`: native FP16 with protected FP32 parameters, overlap 4, model-default segments, two CPU threads. |
 
 The MPS backend requires audio-separator 0.47.0, torch 2.14.0 and demucs 4.1.0
 in a separate environment; the legacy CPU extras/lockfile are incompatible.
 `AUDIO_SEPARATOR_MODEL_DIR` can select the persistent
 checkpoint cache. A change of default model must preserve source-level upload
 deduplication and historical model associations for remaining Shorts.
+
+INSTV7N measurements: a running worker reported ~3.5 GiB peak physical
+footprint; two full-song runs reported ~2.03 GiB peak RSS each and
+2.62–3.62 GiB sampled MPS driver maxima (0.5-second sampling). These counters
+overlap; never sum them or treat them as minimum system RAM. The 8 GB budget
+remains an estimate, and 8 GB system compatibility is unverified. Keep one
+worker with batch size 1, allow headroom for the OS and subprocesses, and
+preserve measurement scope and caveats from README.md.
 
 ## CI & Test dependencies
 - When running tests in CI (`.github/workflows/ci.yml`) or in fresh environments, install dependencies with `uv sync --extra dev --extra all-models` (or `uv sync --all-extras`).
