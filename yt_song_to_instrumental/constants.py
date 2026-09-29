@@ -276,6 +276,22 @@ VIDEO_MATCH_TOKEN_PATTERN = r"[^\W_]+"
 VIDEO_MATCH_PARENS_PATTERN = r"\([^)]*\)|\[[^]]*\]"
 VIDEO_MATCH_DASH_PATTERN = r"\s+[-–—]\s+"
 VIDEO_MATCH_DEFAULT_ARTIST = ""
+VIDEO_MATCH_DURATION_TOLERANCE_SECONDS = 35.0
+VIDEO_MATCH_DURATION_TOLERANCE_FRACTION = 0.35
+VIDEO_CHANNEL_TAB = "/videos"
+VIDEO_CHANNEL_TABS = ("/videos", "/releases", "/featured", "/shorts", "/streams")
+VIDEO_CHANNEL_INDEX_ERROR_LOG = "Could not index trusted video channel %s: %s"
+VIDEO_CHANNEL_MISSING_LOG = "No trusted video channel for %s; skipping Short source search"
+VIDEO_CHANNEL_RESPONSE_ERROR = "Trusted channel index is unavailable"
+VIDEO_CHANNEL_SCREENING_LOG = "Screening channel music video for %s: %s (%s)"
+VIDEO_CHANNEL_PASSED_LOG = "Channel music video passed structural checks: %s"
+VIDEO_CHANNEL_REJECTED_LOG = "Channel candidate failed structural checks: %s"
+VIDEO_SOURCE_REJECTED_LOG = "Source for %s lacks trusted music-video evidence; checking its approved channel"
+SHORT_MUSIC_VIDEO_LABEL = r"(?:official\s+(?:music\s+)?video|music\s+video|official\s+mv)"
+SHORT_MUSIC_VIDEO_TITLE_PATTERN = (
+    rf"(?:\(|\[)\s*{SHORT_MUSIC_VIDEO_LABEL}\s*(?:\)|\])"
+    rf"|(?:^|\s){SHORT_MUSIC_VIDEO_LABEL}\s*$"
+)
 
 PLAYLIST_PAGE_SIZE = 50
 PLAYLIST_UNKNOWN_ORDER_ERROR = "Playlist insertion deferred: source ordering metadata is missing"
@@ -334,7 +350,13 @@ SHORT_MOTION_PEAK_MULTIPLIER = 1.5
 SHORT_DEFAULT_SAMPLE_FPS = 0.5
 SHORT_REJECT_TITLE_PATTERN = (
     r"\b(?:audio|visuali[sz]er|lyric(?:s|\s+video)?|trailer|teaser|snippet|"
-    r"concert|live\s+(?:at|in|performance))\b"
+    r"concert|live\s+(?:at|in|performance)|game(?:play|s)?|gaming|gamer|"
+    r"fps|fpv|shooter|battle\s+royale|walkthrough|playthrough|montage|"
+    r"frag(?:movie|s)?|amv|gmv|anime|fan[\s-]*(?:made|edit|video)|unofficial|"
+    r"reaction|reacting|review|cover|type\s+beat|remake|tutorial|how\s+to|"
+    r"slowed|sped\s+up|nightcore|daycore|instrumental|karaoke|guitar|piano|"
+    r"drum|behind\s+the\s+scenes|interview|podcast|mashup|"
+    r"\d+\s*(?:hours?|hz)|8d\s+audio|bass\s+boosted)\b"
 )
 
 # One shared upload cadence for instrumentals and Shorts, across model changes.

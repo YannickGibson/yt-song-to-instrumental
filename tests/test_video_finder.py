@@ -1,145 +1,147 @@
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
+from yt_song_to_instrumental.video_detector import has_music_video_label
 from yt_song_to_instrumental.video_finder import (
+    _channel_video_cache,
+    VideoChannelUnavailable,
     find_and_verify_music_video,
+    get_channel_videos,
+    is_trusted_music_video,
     search_channel_candidates,
-    search_music_video_candidates,
 )
 
 
-class TestSearchChannelCandidates:
-    @patch("yt_song_to_instrumental.video_finder.get_channel_videos")
-    def test_finds_official_music_video_on_channel(self, mock_get_channel):
-        mock_get_channel.return_value = [
-            {"id": "v1", "title": "Sample Artist 9 - Tell Em (Audio)", "duration": 181},
-            {"id": "v2", "title": "Sample Artist 9 - SANJI (Official Video)", "duration": 148},
-            {"id": "v3", "title": "Sample Artist 9 - POCKET ROCKET (Official Video)", "duration": 133},
-        ]
-
-        candidates = search_channel_candidates(
-            "https://youtube.com/@sample-artist", "SANJI", expected_duration=150.0
-        )
-
-        assert len(candidates) == 1
-        assert candidates[0]["id"] == "v2"
-        assert candidates[0]["priority"] == 1 or candidates[0]["priority"] == 2
-
-
-class TestSearchMusicVideoCandidates:
-    @patch("yt_dlp.YoutubeDL")
-    def test_filters_negative_keywords(self, mock_ydl_cls):
-        mock_ydl = MagicMock()
-        mock_ydl_cls.return_value.__enter__.return_value = mock_ydl
-        mock_ydl.extract_info.return_value = {
-            "entries": [
-                {"id": "v1", "title": "Artist - Song (Reaction!)", "duration": 180, "uploader": "Reactor"},
-                {"id": "v2", "title": "Artist - Song (Type Beat)", "duration": 180, "uploader": "Producer"},
-                {"id": "v3", "title": "Artist - Song (Guitar Cover)", "duration": 180, "uploader": "Guitarist"},
-                {"id": "v4", "title": "Artist - Song (Official Audio)", "duration": 180, "uploader": "Artist"},
-                {"id": "v5", "title": "Artist - Song [Visualizer]", "duration": 180, "uploader": "Artist"},
-                {"id": "v6", "title": "Artist - Song [Official Video]", "duration": 180, "uploader": "Artist"},
-            ]
-        }
-
-        candidates = search_music_video_candidates("Artist", "Song", expected_duration=180.0)
-
-        assert len(candidates) == 1
-        assert candidates[0]["id"] == "v6"
-
-    @patch("yt_dlp.YoutubeDL")
-    def test_filters_duration_mismatch(self, mock_ydl_cls):
-        mock_ydl = MagicMock()
-        mock_ydl_cls.return_value.__enter__.return_value = mock_ydl
-        mock_ydl.extract_info.return_value = {
-            "entries": [
-                {"id": "v1", "title": "Artist - Song (Snippet)", "duration": 15, "uploader": "Fan"},
-                {"id": "v2", "title": "Artist - Song (10 min loop)", "duration": 600, "uploader": "Looper"},
-                {"id": "v3", "title": "Artist - Song [Music Video]", "duration": 175, "uploader": "Artist"},
-            ]
-        }
-
-        candidates = search_music_video_candidates("Artist", "Song", expected_duration=170.0)
-
-        assert len(candidates) == 1
-        assert candidates[0]["id"] == "v3"
-
-    @patch("yt_dlp.YoutubeDL")
-    def test_requires_title_token_match(self, mock_ydl_cls):
-        mock_ydl = MagicMock()
-        mock_ydl_cls.return_value.__enter__.return_value = mock_ydl
-        mock_ydl.extract_info.return_value = {
-            "entries": [
-                {"id": "v1", "title": "Totally Different Track - Official Video", "duration": 180, "uploader": "Artist"},
-                {"id": "v2", "title": "Artist - Real Song [Official Video]", "duration": 180, "uploader": "Artist"},
-            ]
-        }
-
-        candidates = search_music_video_candidates("Artist", "Real Song", expected_duration=180.0)
-
-        assert len(candidates) == 1
-        assert candidates[0]["id"] == "v2"
+@pytest.mark.parametrize("title", [
+    "Artist - Track (Official Gaming Music Video)",
+    "Artist - Track (Official ExampleGame Music Video)",
+    "Artist - Track (Official Shooter2 Music Video)",
+    "Artist - Track (Official Video) FPS Montage",
+    "Artist - Track (Official Video) Gameplay",
+    "Artist - Track (Music Video) Fan Edit",
+    "Artist - Track [Official Video] (Unofficial)",
+    "Artist - Track (AMV)",
+    "Artist - Track (Official Visualizer)",
+    "Artist - Track [Official Audio]",
+    "Artist - Track (Lyric Video)",
+    "Artist - Track (Reaction!)",
+    "Artist - Track (Type Beat)",
+    "Artist - Track (Guitar Cover)",
+    "Artist - Track",
+])
+def test_moving_or_matching_audio_does_not_establish_music_video(title):
+    assert not has_music_video_label(title)
 
 
-class TestFindAndVerifyMusicVideo:
-    @patch("yt_song_to_instrumental.video_finder.detect_if_music_video")
-    @patch("yt_song_to_instrumental.video_finder.download_source_video")
-    @patch("yt_song_to_instrumental.video_finder.search_channel_candidates")
-    def test_successful_channel_verification(self, mock_channel_search, mock_download, mock_detect, tmp_path):
-        mock_channel_search.return_value = [{"id": "mv123", "title": "Sample Artist 9 - SANJI (Official Video)"}]
-        mock_file = tmp_path / "video_mv123.mp4"
-        mock_file.touch()
-        mock_download.return_value = mock_file
-        mock_detect.return_value = (True, 15.4)
-
-        result_path, diff, video_url = find_and_verify_music_video(
-            "Sample Artist 9", "SANJI", tmp_path, expected_duration=148.0, video_channel_url="https://youtube.com/@sample-artist"
-        )
-
-        assert result_path == mock_file
-        assert diff == 15.4
-        assert video_url == "https://www.youtube.com/watch?v=mv123"
-        assert mock_detect.call_args.kwargs["video_title"] == "Sample Artist 9 - SANJI (Official Video)"
-
-    @patch("yt_song_to_instrumental.video_finder.detect_if_music_video")
-    @patch("yt_song_to_instrumental.video_finder.download_source_video")
-    @patch("yt_song_to_instrumental.video_finder.search_music_video_candidates")
-    def test_candidate_fails_motion_check_returns_none(self, mock_search, mock_download, mock_detect, tmp_path):
-        mock_search.return_value = [{"id": "mv123", "title": "Artist - Song [Visualizer]"}]
-        mock_file = tmp_path / "video_mv123.mp4"
-        mock_file.touch()
-        mock_download.return_value = mock_file
-        mock_detect.return_value = (False, 0.04)
-
-        result_path, diff, video_url = find_and_verify_music_video(
-            "Artist", "Song", tmp_path, expected_duration=180.0
-        )
-
-        assert result_path is None
-        assert diff == 0.0
-        assert video_url is None
-        assert not mock_file.exists()  # Ensure cleaned up
-
-
-@patch("yt_dlp.YoutubeDL")
-def test_rejects_shared_word_and_other_artist(mock_ydl_cls):
-    mock_ydl_cls.return_value.__enter__.return_value.extract_info.return_value = {
-        "entries": [
-            {"id": "wrongartist", "title": "Other Artist - Speak Again (Official Video)", "uploader": "Other Artist", "duration": 180},
-            {"id": "wrongtrack", "title": "Example Artist - Again (Official Video)", "uploader": "Example Artist", "duration": 180},
-            {"id": "match", "title": "Example Artist - Speak Again (Official Video)", "uploader": "Director", "duration": 180},
-        ]}
-    candidates = search_music_video_candidates("Example Artist", "Speak Again", 180)
-    assert [c["id"] for c in candidates] == ["match"]
+@pytest.mark.parametrize("title", [
+    "Artist - Track (Official Music Video)",
+    "Artist - Track [OFFICIAL VIDEO]",
+    "Artist - Track (Music Video)",
+    "Artist - Track Official Music Video",
+    "Artist - Track (Official MV)",
+])
+def test_explicit_music_video_labels(title):
+    assert has_music_video_label(title)
 
 
 @patch("yt_song_to_instrumental.video_finder.get_channel_videos")
-def test_channel_requires_entire_song_title(mock_entries):
-    mock_entries.return_value = [
-        {"id": "wrong", "title": "Again (Official Video)", "duration": 180},
-        {"id": "right", "title": "Speak Again (Official Video)", "duration": 180},
+def test_channel_requires_label_full_title_and_matching_duration(index):
+    index.return_value = [
+        {"id": "audio", "title": "Artist - Track (Official Audio)", "duration": 180},
+        {"id": "game", "title": "Artist - Track (Official ExampleGame Music Video)", "duration": 180},
+        {"id": "bare", "title": "Artist - Track", "duration": 180},
+        {"id": "different", "title": "Artist - Other Track (Official Video)", "duration": 180},
+        {"id": "long", "title": "Artist - Real Track (Official Video)", "duration": 600},
+        {"id": "right", "title": "Artist - Real Track (Official Video)", "duration": 185},
     ]
-    candidates = search_channel_candidates("channel", "Example Artist - Speak Again", 180, artist="Example Artist")
-    assert [c["id"] for c in candidates] == ["right"]
+    candidates = search_channel_candidates("channel", "Artist - Real Track", 180, artist="Artist")
+    assert [entry["id"] for entry in candidates] == ["right"]
+
+
+@patch("yt_song_to_instrumental.video_finder.get_channel_videos")
+def test_same_artist_name_and_official_label_cannot_impersonate_channel(index):
+    index.return_value = [{"id": "approved", "title": "Artist - Track (Official Video)"}]
+    assert not is_trusted_music_video("fan-upload", "Artist - Track (Official Video)", "channel")
+    assert is_trusted_music_video("approved", "Artist - Track (Official Video)", "channel")
+    assert not is_trusted_music_video("approved", "Artist - Track (Gameplay)", "channel")
+    assert not is_trusted_music_video("approved", "Artist - Track (Official Video)", None)
+
+
+@patch("yt_dlp.YoutubeDL")
+def test_channel_tab_is_normalized_and_cached(ydl):
+    _channel_video_cache.clear()
+    extractor = ydl.return_value.__enter__.return_value
+    extractor.extract_info.return_value = {"entries": [{"id": "official"}]}
+    entries = get_channel_videos("https://www.youtube.com/@example/releases?view=0")
+    assert entries == [{"id": "official"}]
+    assert get_channel_videos("https://www.youtube.com/@example/videos") == entries
+    extractor.extract_info.assert_called_once_with(
+        "https://www.youtube.com/@example/videos", download=False,
+    )
+    _channel_video_cache.clear()
+
+
+@patch("yt_dlp.YoutubeDL")
+def test_failed_channel_index_is_retryable_and_never_searches_globally(ydl, tmp_path):
+    _channel_video_cache.clear()
+    extractor = ydl.return_value.__enter__.return_value
+    extractor.extract_info.side_effect = [RuntimeError("temporarily unavailable"), {"entries": []}]
+    with pytest.raises(VideoChannelUnavailable):
+        find_and_verify_music_video("Artist", "Track", tmp_path,
+                                    video_channel_url="https://www.youtube.com/@example")
+    assert find_and_verify_music_video("Artist", "Track", tmp_path,
+                                      video_channel_url="https://www.youtube.com/@example") == (None, 0.0, None)
+    assert extractor.extract_info.call_count == 2
+    assert all(call.args[0] == "https://www.youtube.com/@example/videos"
+               for call in extractor.extract_info.call_args_list)
+    _channel_video_cache.clear()
+
+
+@patch("yt_dlp.YoutubeDL")
+def test_missing_channel_cannot_start_global_search(ydl, tmp_path):
+    assert find_and_verify_music_video("Artist", "Track", tmp_path) == (None, 0.0, None)
+    ydl.assert_not_called()
+
+
+@patch("yt_song_to_instrumental.video_finder.detect_if_music_video")
+@patch("yt_song_to_instrumental.video_finder.download_source_video")
+@patch("yt_song_to_instrumental.video_finder.get_channel_videos")
+def test_success_requires_approved_source_and_structural_checks(index, download, detect, tmp_path):
+    index.return_value = [{"id": "official", "title": "Artist - Track (Official Video)", "duration": 180}]
+    video = tmp_path / "official.mp4"
+    video.touch()
+    download.return_value = video
+    detect.return_value = (True, 15.4)
+    result = find_and_verify_music_video("Artist", "Track", tmp_path, 180,
+                                         video_channel_url="https://www.youtube.com/@example")
+    assert result == (video, 15.4, "https://www.youtube.com/watch?v=official")
+    assert detect.call_args.kwargs["video_title"] == "Artist - Track (Official Video)"
+
+
+@patch("yt_song_to_instrumental.video_finder.detect_if_music_video")
+@patch("yt_song_to_instrumental.video_finder.download_source_video")
+@patch("yt_song_to_instrumental.video_finder.get_channel_videos")
+def test_failed_structure_is_cleaned_and_next_channel_candidate_is_tried(index, download, detect, tmp_path):
+    index.return_value = [
+        {"id": "loop", "title": "Artist - Track (Official Video)"},
+        {"id": "real", "title": "Artist - Track (Official Music Video)"},
+    ]
+    loop, real = tmp_path / "loop.mp4", tmp_path / "real.mp4"
+    loop.touch()
+    real.touch()
+    download.side_effect = [loop, real]
+    detect.side_effect = [(False, 0.04), (True, 25.0)]
+    result = find_and_verify_music_video("Artist", "Track", tmp_path,
+                                         video_channel_url="https://www.youtube.com/@example")
+    assert result[0] == real
+    assert not loop.exists()
+
+
+@patch("yt_song_to_instrumental.video_finder.download_source_video")
+@patch("yt_song_to_instrumental.video_finder.get_channel_videos")
+def test_channel_gameplay_never_reaches_downloader(index, download, tmp_path):
+    index.return_value = [{"id": "game", "title": "Artist - Track (Official ExampleGame Music Video)"}]
+    assert find_and_verify_music_video("Artist", "Track", tmp_path,
+                                       video_channel_url="channel") == (None, 0.0, None)
+    download.assert_not_called()

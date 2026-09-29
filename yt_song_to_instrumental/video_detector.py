@@ -24,11 +24,25 @@ from yt_song_to_instrumental.constants import (
     SHORT_LOOP_EPSILON, SHORT_STRUCTURE_MIN_FRAMES,
     SHORT_STRUCTURE_FRAME_TOLERANCE, SHORT_MOTION_PEAK_MULTIPLIER,
     SHORT_DEFAULT_SAMPLE_FPS, SHORT_REJECT_TITLE_PATTERN,
+    SHORT_MUSIC_VIDEO_TITLE_PATTERN,
 )
 
 logger = logging.getLogger(__name__)
 
 _AUDIO_INDICATOR_PATTERN = re.compile(SHORT_REJECT_TITLE_PATTERN, re.IGNORECASE)
+_MUSIC_VIDEO_TITLE_PATTERN = re.compile(SHORT_MUSIC_VIDEO_TITLE_PATTERN, re.IGNORECASE)
+
+
+def has_music_video_label(title: str) -> bool:
+    """Require an explicit music-video label without conflicting content labels.
+
+    This is metadata evidence, not visual classification. Publisher membership
+    must be checked separately before trusting any source.
+    """
+    return bool(
+        _MUSIC_VIDEO_TITLE_PATTERN.search(title)
+        and not _AUDIO_INDICATOR_PATTERN.search(title)
+    )
 
 def get_source_video_title(service, video_id: str) -> str | None:
     """Read the unmodified source title; normalized track metadata loses warnings."""

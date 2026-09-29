@@ -680,5 +680,8 @@ class TestSelectTracks:
 
 @pytest.fixture(autouse=True)
 def source_title_metadata():
-    with patch("yt_song_to_instrumental.pipeline.get_source_video_title", return_value="Example Artist - Track (Official Video)") as fetch:
+    with (
+        patch("yt_song_to_instrumental.pipeline.get_source_video_title", return_value="Example Artist - Track (Official Video)") as fetch,
+        patch("yt_song_to_instrumental.pipeline.is_trusted_music_video", return_value=True),
+    ):
         yield fetch

@@ -21,6 +21,7 @@ from yt_song_to_instrumental.constants import (
     SHORT_DURATION_SECONDS,
     SHORT_START_FRACTION,
     SHORT_SOURCE_METADATA_UNAVAILABLE,
+    VIDEO_SOURCE_REJECTED_LOG,
     SHORT_SKIPPED_STATUSES,
     TRACK_STATUS_ALREADY_UPLOADED,
 )
@@ -39,7 +40,9 @@ from yt_song_to_instrumental.thumbnail import get_thumbnail_for_track
 from yt_song_to_instrumental.upload_pacing import wait_for_upload_slot
 from yt_song_to_instrumental.uploader import upload_video
 from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title
-from yt_song_to_instrumental.video_finder import find_and_verify_music_video
+from yt_song_to_instrumental.video_finder import (
+    VideoChannelUnavailable, find_and_verify_music_video, is_trusted_music_video,
+)
 from yt_song_to_instrumental.video_render import render_short_video, render_video
 from yt_song_to_instrumental.trimmer import detect_silence_threshold, trim_audio_file
 
@@ -471,34 +474,42 @@ def _upload_short_track(
             video_start_time = start_time
             audio_start_time = SHORT_DEFAULT_START_SECONDS
 
-    is_music_vid = None
+    trusted_video_channel = ctx.video_channel_url or track.channel_url
+    is_music_vid = False
+    motion_diff = SHORT_DEFAULT_START_SECONDS
     music_video_url = None
-    is_music_vid, motion_diff = detect_if_music_video(
-        source_video,
-        start_time=video_start_time,
-        duration=SHORT_DURATION_SECONDS,
-        video_title=source_title,
-    )
-    if not is_music_vid:
-        logger.info(
-            "Track %s source video detected as static / non-music-video (diff=%.2f); searching YouTube for official music video...",
-            track.title,
-            motion_diff,
+    try:
+        trusted_source = is_trusted_music_video(track.video_id, source_title, trusted_video_channel)
+    except VideoChannelUnavailable:
+        ctx.history.record_short_status(track.video_id, ctx.model, SHORT_SOURCE_METADATA_UNAVAILABLE)
+        return
+    if trusted_source:
+        is_music_vid, motion_diff = detect_if_music_video(
+            source_video,
+            start_time=video_start_time,
+            duration=SHORT_DURATION_SECONDS,
+            video_title=source_title,
         )
+    if not is_music_vid:
+        logger.info(VIDEO_SOURCE_REJECTED_LOG, track.title)
         track_dur = None
         if instrumental_path and instrumental_path.exists():
             try:
                 track_dur = _get_duration(instrumental_path)
             except Exception:
                 track_dur = None
-        alt_video, alt_motion, alt_video_url = find_and_verify_music_video(
-            artist=artist,
-            track_title=track.title,
-            tmp_dir=ctx.tmp_dir,
-            expected_duration=track_dur,
-            start_time=video_start_time,
-            video_channel_url=ctx.video_channel_url,
-        )
+        try:
+            alt_video, alt_motion, alt_video_url = find_and_verify_music_video(
+                artist=artist,
+                track_title=track.title,
+                tmp_dir=ctx.tmp_dir,
+                expected_duration=track_dur,
+                start_time=video_start_time,
+                video_channel_url=trusted_video_channel,
+            )
+        except VideoChannelUnavailable:
+            ctx.history.record_short_status(track.video_id, ctx.model, SHORT_SOURCE_METADATA_UNAVAILABLE)
+            return
         if alt_video:
             managed_alt_video = ctx.tmp_dir / (
                 f"video_{track.video_id}{SHORT_ALTERNATE_SOURCE_MARKER}"

@@ -5,9 +5,10 @@ import pytest
 
 from yt_song_to_instrumental.audio_alignment import ShortAlignment
 from yt_song_to_instrumental.config import LabelConfig
-from yt_song_to_instrumental.constants import SHORT_ALIGNMENT_FAILED
+from yt_song_to_instrumental.constants import SHORT_ALIGNMENT_FAILED, SHORT_SOURCE_METADATA_UNAVAILABLE
 from yt_song_to_instrumental.history import HistoryDB
 from yt_song_to_instrumental.pipeline import PipelineReport, _RunContext, _upload_short_track
+from yt_song_to_instrumental.video_finder import VideoChannelUnavailable, is_trusted_music_video
 
 
 @pytest.fixture
@@ -45,6 +46,7 @@ def short_case(tmp_path):
     track = history.get_all_downloads()[0]
     with (
         patch("yt_song_to_instrumental.pipeline.get_source_video_title", return_value="Track"),
+        patch("yt_song_to_instrumental.pipeline.is_trusted_music_video", return_value=True),
         patch("yt_song_to_instrumental.pipeline.download_source_video", return_value=source),
         patch("yt_song_to_instrumental.pipeline.download_track_audio", return_value=alternate_audio) as download_audio,
         patch("yt_song_to_instrumental.pipeline._get_duration", return_value=200.0),
@@ -139,6 +141,54 @@ def test_already_uploaded_short_remains_untouched(short_case):
     align.assert_not_called()
     render.assert_not_called()
     upload.assert_not_called()
+
+
+@pytest.mark.parametrize("source_title, entries", [
+    ("Artist - Track (Official ExampleGame Music Video)", [{"id": "source-id"}]),
+    ("Artist - Track (Official Video)", [{"id": "unrelated-id"}]),
+    ("Artist - Track", [{"id": "source-id"}]),
+])
+def test_motion_and_audio_cannot_override_source_rejection(short_case, source_title, entries):
+    ctx, track, align, render, upload, detect, _ = short_case
+    with (
+        patch("yt_song_to_instrumental.pipeline.get_source_video_title", return_value=source_title),
+        patch("yt_song_to_instrumental.pipeline.is_trusted_music_video", wraps=is_trusted_music_video),
+        patch("yt_song_to_instrumental.video_finder.get_channel_videos", return_value=entries),
+        patch("yt_song_to_instrumental.pipeline.find_and_verify_music_video", return_value=(None, 0.0, None)) as find,
+    ):
+        _run(ctx, track)
+    assert find.call_args.kwargs["video_channel_url"] == track.channel_url
+    detect.assert_not_called()
+    align.assert_not_called()
+    render.assert_not_called()
+    upload.assert_not_called()
+    assert ctx.history.get_short_status(track.video_id, ctx.model) == "skipped_not_music_video"
+    assert ctx.history.get_existing_upload(track.video_id).youtube_upload_id == "existing-full"
+
+
+@pytest.mark.parametrize("lookup", ["is_trusted_music_video", "find_and_verify_music_video"])
+def test_channel_failure_keeps_short_retryable_without_reuploading_instrumental(short_case, lookup):
+    ctx, track, _, render, upload, detect, _ = short_case
+    ctx.video_channel_url = "approved-channel"
+    detect.return_value = (False, 0.1)
+    with patch(f"yt_song_to_instrumental.pipeline.{lookup}", side_effect=VideoChannelUnavailable):
+        _run(ctx, track)
+    render.assert_not_called()
+    upload.assert_not_called()
+    assert ctx.history.get_short_status(track.video_id, ctx.model) == SHORT_SOURCE_METADATA_UNAVAILABLE
+    assert ctx.history.get_existing_upload(track.video_id).youtube_upload_id == "existing-full"
+    detect.return_value = (True, 30.0)
+    _run(ctx, track)
+    upload.assert_called_once()
+
+
+def test_configured_video_channel_takes_precedence_over_release_channel(short_case):
+    ctx, track, _, _, _, detect, _ = short_case
+    ctx.video_channel_url = "approved-channel"
+    detect.return_value = (False, 0.1)
+    with patch("yt_song_to_instrumental.pipeline.find_and_verify_music_video", return_value=(None, 0.0, None)) as find:
+        _run(ctx, track)
+    assert find.call_args.kwargs["video_channel_url"] == "approved-channel"
 
 
 def test_forced_short_waits_and_interrupted_wait_preserves_instrumental(short_case):

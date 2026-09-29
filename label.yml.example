@@ -55,8 +55,9 @@ templates:
   #   <artist-tag> #instrumental #shorts
 
 # YouTube Shorts options (mutually exclusive):
-# upload_short: blindly upload 20s short for every instrumental
-# upload_short_if_music_video: upload 20s short only if source is detected as an active music video
+# Both options require an explicitly labeled music video from the approved channel.
+# upload_short: request a 20s Short for each instrumental, subject to source checks
+# upload_short_if_music_video: request a 20s Short when a qualifying video exists
 upload_short: false
 upload_short_if_music_video: false
 
@@ -89,9 +90,10 @@ tab: videos
 # an after_date (YYYYMMDD), an optional tab ("videos" or "releases"), optionally
 # preserve_original_video_title: true to preserve the raw video title, optionally
 # create_album_playlists: false to disable album playlist creation (defaults to true),
-# and optionally video_channel_url to source official music videos for YouTube Shorts.
+# video_channel_url restricts Shorts to that approved channel's Videos tab.
+# Without it, the original release channel is used; unrelated uploads are never searched.
 sources:
-  - url: "https://music.youtube.com/channel/UCH1C5-gc2yyK_Sw0VxqxKHA"  # artist releases / topic
+  - url: "https://music.youtube.com/channel/UCexampleSourceChannelId"  # artist releases / topic
     video_channel_url: "https://www.youtube.com/@sample-source-5"             # official music video channel
     after_date: "20260101"
   - url: "https://youtube.com/@aggregator_channel"

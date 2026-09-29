@@ -3,7 +3,16 @@
 Short eligibility is a heuristic, not a content-safety certification. The detector
 cannot recognize dangerous imagery or guarantee platform policy compliance.
 
-The same entry point screens both the original source and alternate candidates:
+Before visual screening, both direct sources and alternate candidates must have
+an explicit music-video label and appear in the approved channel's Videos tab.
+`video_channel_url` chooses that channel; otherwise the original release channel
+is used. Display names and claims of being “official” cannot authorize unrelated
+uploads. Global search is disabled. Gaming and fan-edit labels are rejected, and
+tracks without a qualifying candidate are skipped. Failed channel lookups remain
+retryable. These checks can miss genuine videos with unusual labeling or a
+different publisher; they favor avoiding unsuitable automatic uploads.
+
+The same structural detector then screens both kinds of source:
 
 1. Reject raw titles advertising audio, visualizers/visualisers, lyrics, trailers,
    teasers, snippets, concerts or live performances.
@@ -25,11 +34,10 @@ fingerprint size P, N sampled frames and L tested offsets. Searching up to half
 the source is quadratic in N before the explicit duration cap; no full pairwise
 similarity matrix is stored. Download cost is separate.
 
-These checks do not establish uploader authenticity and are not semantic
-moderation. A real music video can still contain unsafe footage. Short sources
-should remain constrained by the configured source/channel policy. No new
-manual-approval service, external model, or automatic upload is introduced by
-this detector change.
+Structural checks alone do not establish uploader authenticity or distinguish
+gameplay from a music video. The channel restriction provides separate publisher
+evidence, but misleading labels on an approved channel may still require review.
+No semantic classification model is used.
 
 Tests cover long multi-scene loops, brightness changes, intros/outros, isolated
 repeated shots, unrelated changing scenes and failed/partial decoding. Real
