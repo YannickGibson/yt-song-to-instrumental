@@ -64,6 +64,16 @@ class TestEnqueuePriorityRequest:
         assert request.upload_short == 1
         assert request.short_start_seconds == 35.0
 
+    def test_persists_short_requirement_with_default_offset(self, tmp_path):
+        request = enqueue_priority_request(
+            "https://youtu.be/QueueItem01",
+            tmp_path / "history.db",
+            upload_short=True,
+        )
+
+        assert request.upload_short == 1
+        assert request.short_start_seconds is None
+
     def test_rejects_offset_without_short(self, tmp_path):
         with pytest.raises(ValueError, match="requires upload_short"):
             enqueue_priority_request(
@@ -83,6 +93,30 @@ class TestEnqueuePriorityRequest:
 
 
 class TestProcessPriorityRequests:
+    @pytest.mark.parametrize("request_short,short_complete,expected", [
+        (False, False, PRIORITY_STATUS_COMPLETED),
+        (True, True, PRIORITY_STATUS_COMPLETED),
+        (True, False, PRIORITY_STATUS_FAILED),
+    ])
+    @patch("yt_song_to_instrumental.priority.process_url")
+    def test_model_switch_uses_durable_original_uploads(
+        self, mock_process_url, request_short, short_complete, expected,
+    ):
+        db = HistoryDB(":memory:")
+        request = db.enqueue_priority_request(
+            "https://youtube.com/watch?v=QueueItem01", upload_short=request_short,
+        )
+        db.record_upload("QueueItem01", "historical-model", "original-upload", "public")
+        if short_complete:
+            db.record_short_upload("QueueItem01", "historical-model", "original-short")
+        mock_process_url.return_value = PipelineReport()
+
+        _process_pending(db)
+
+        saved = {item.id: item for item in db.list_priority_requests()}[request.id]
+        assert saved.status == expected
+        assert db.is_uploaded("QueueItem01", "htdemucs") is False
+
     @patch("yt_song_to_instrumental.priority.process_url")
     def test_requires_both_outputs_and_passes_short_options(self, mock_process_url):
         db = HistoryDB(":memory:")

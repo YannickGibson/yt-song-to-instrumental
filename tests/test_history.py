@@ -116,6 +116,27 @@ class TestSeparations:
 
 
 class TestUploads:
+    def test_existing_upload_ignores_model_and_short_only_rows(self):
+        db = make_db()
+        db.record_short_status("vid1", "new-model", "render_failed")
+        assert db.get_existing_upload("vid1") is None
+        db.record_upload("vid1", "htdemucs", "original-upload", "public")
+        db.record_short_upload("vid1", "htdemucs", "original-short")
+
+        original = db.get_existing_upload("vid1")
+
+        assert original.model == "htdemucs"
+        assert original.youtube_upload_id == "original-upload"
+        assert original.youtube_short_upload_id == "original-short"
+        assert db.is_uploaded("vid1", "new-model") is False
+
+    def test_existing_upload_keeps_first_publication_when_multiple_models_exist(self):
+        db = make_db()
+        db.record_upload("vid1", "htdemucs", "original-upload", "public")
+        db.record_upload("vid1", "another-model", "later-upload", "public")
+
+        assert db.get_existing_upload("vid1").youtube_upload_id == "original-upload"
+
     def test_is_uploaded_false_initially(self):
         db = make_db()
         assert db.is_uploaded("abc123", "htdemucs") is False
@@ -211,6 +232,54 @@ class TestPriorityRequests:
         saved = db.list_priority_requests()[0]
         assert saved.upload_short == 1
         assert saved.short_start_seconds == 35.0
+
+    def test_persists_requested_short_with_default_offset(self):
+        db = make_db()
+
+        request = db.enqueue_priority_request(
+            "https://youtube.com/watch?v=QueueItem01",
+            upload_short=True,
+        )
+
+        assert request.upload_short == 1
+        assert request.short_start_seconds is None
+        saved = db.list_priority_requests()[0]
+        assert saved.upload_short == 1
+        assert saved.short_start_seconds is None
+
+    def test_migrates_not_null_short_start_seconds(self, tmp_path):
+        import sqlite3
+        db_file = tmp_path / "legacy.db"
+        con = sqlite3.connect(str(db_file))
+        con.execute("""
+            CREATE TABLE priority_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT NOT NULL,
+                requested_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                error TEXT NOT NULL DEFAULT '',
+                upload_short INTEGER NOT NULL DEFAULT 0,
+                short_start_seconds REAL NOT NULL DEFAULT 0.0
+            )
+        """)
+        con.execute(
+            "INSERT INTO priority_requests (url, requested_at, status, upload_short, short_start_seconds) VALUES (?, ?, ?, ?, ?)",
+            ("https://youtube.com/watch?v=QueueItem01", "2026-09-05T00:00:00+00:00", "pending", 1, 35.0),
+        )
+        con.commit()
+        con.close()
+
+        db = HistoryDB(db_file)
+        try:
+            req = db.enqueue_priority_request("https://youtube.com/watch?v=QueueItem02", upload_short=True)
+            assert req.short_start_seconds is None
+            items = {item.url: item for item in db.list_priority_requests()}
+            assert items["https://youtube.com/watch?v=QueueItem01"].short_start_seconds == 35.0
+            assert items["https://youtube.com/watch?v=QueueItem02"].short_start_seconds is None
+        finally:
+            db.close()
 
     def test_reenqueue_updates_requested_short_options(self):
         db = make_db()

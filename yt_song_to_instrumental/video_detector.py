@@ -1,7 +1,6 @@
 import logging
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -14,14 +13,35 @@ from yt_song_to_instrumental.constants import (
     SHORT_DIVERSITY_MIN_MEDIAN_DIFF,
     SHORT_DIVERSITY_SAMPLE_COUNT,
     SHORT_DURATION_SECONDS,
+    SHORT_SOURCE_TITLE_PART,
+    SHORT_STRUCTURE_FPS, SHORT_STRUCTURE_WIDTH, SHORT_STRUCTURE_HEIGHT,
+    SHORT_STRUCTURE_MAX_SECONDS, SHORT_STRUCTURE_TIMEOUT_SECONDS,
+    SHORT_PROBE_TIMEOUT_SECONDS, SHORT_STRUCTURE_DECODE_THREADS,
+    SHORT_LOOP_WIDTH, SHORT_LOOP_HEIGHT, SHORT_LOOP_MIN_SECONDS,
+    SHORT_LOOP_MIN_OVERLAP_SECONDS, SHORT_LOOP_ALIGNMENT_FRAMES,
+    SHORT_LOOP_MATCH_CORRELATION, SHORT_LOOP_MIN_COVERAGE, SHORT_LOOP_WINDOWS,
+    SHORT_LOOP_MIN_WINDOW_COVERAGE, SHORT_LOOP_MIN_PEAK_MARGIN,
+    SHORT_LOOP_EPSILON, SHORT_STRUCTURE_MIN_FRAMES,
+    SHORT_STRUCTURE_FRAME_TOLERANCE, SHORT_MOTION_PEAK_MULTIPLIER,
+    SHORT_DEFAULT_SAMPLE_FPS, SHORT_REJECT_TITLE_PATTERN,
 )
 
 logger = logging.getLogger(__name__)
 
-_AUDIO_INDICATOR_PATTERN = re.compile(
-    r"\b(?:official\s+)?(?:audio|visualizer|lyric\s+video|lyrics)\b",
-    re.IGNORECASE,
-)
+_AUDIO_INDICATOR_PATTERN = re.compile(SHORT_REJECT_TITLE_PATTERN, re.IGNORECASE)
+
+def get_source_video_title(service, video_id: str) -> str | None:
+    """Read the unmodified source title; normalized track metadata loses warnings."""
+    try:
+        response = service.videos().list(part=SHORT_SOURCE_TITLE_PART, id=video_id).execute()
+        for item in response["items"]:
+            if item["id"] == video_id:
+                title = item["snippet"]["title"]
+                if isinstance(title, str) and title.strip():
+                    return title
+    except Exception:
+        logger.warning("Source title unavailable; refusing unverified Short source")
+    return None
 
 
 def _probe_duration(video_path: Path) -> float | None:
@@ -33,10 +53,11 @@ def _probe_duration(video_path: Path) -> float | None:
         str(video_path),
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True,
+                                timeout=SHORT_PROBE_TIMEOUT_SECONDS)
         duration = float(result.stdout.strip())
-        return duration if duration > 0.0 else None
-    except (subprocess.CalledProcessError, ValueError):
+        return duration if np.isfinite(duration) and duration > 0.0 else None
+    except (subprocess.SubprocessError, OSError, ValueError):
         logger.warning("Could not probe video duration for diversity check: %s", video_path)
         return None
 
@@ -45,65 +66,103 @@ def _frame_correlation(first: np.ndarray, second: np.ndarray) -> float:
     first_std = float(np.std(first))
     second_std = float(np.std(second))
     if first_std == 0.0 or second_std == 0.0:
-        return 1.0 if np.array_equal(first, second) else 0.0
+        return 1.0
     return float(np.corrcoef(first.reshape(-1), second.reshape(-1))[0, 1])
 
 
-def _has_sustained_visual_diversity(video_path: Path, tmp_dir: Path) -> tuple[bool, float, float]:
-    """Reject fixed-layout visualizers that contain enough effects to look active.
-
-    Sparse frames are sampled across the whole video, heavily blurred to suppress
-    particles and small animated overlays, then compared pairwise. Genuine music
-    videos normally change composition over time; visualizers keep the same
-    low-frequency structure even when parts of the artwork move.
-    """
-    video_duration = _probe_duration(video_path)
-    if video_duration is None:
-        return False, 0.0, 1.0
-
-    sample_fps = SHORT_DIVERSITY_SAMPLE_COUNT / video_duration
-    out_pattern = tmp_dir / "diversity_%03d.png"
+def _sample_source(video_path: Path, video_duration: float) -> np.ndarray | None:
+    """Decode the entire source once, with bounded memory and a deadline."""
+    if video_duration > SHORT_STRUCTURE_MAX_SECONDS:
+        logger.warning("Source exceeds automatic screening duration limit; skipping")
+        return None
+    expected = int(round(video_duration * SHORT_STRUCTURE_FPS))
     cmd = [
-        "ffmpeg", "-y",
-        "-i", str(video_path),
-        "-vf", f"fps={sample_fps:.8f},scale=160:90",
-        "-frames:v", str(SHORT_DIVERSITY_SAMPLE_COUNT),
-        "-vsync", "vfr",
-        str(out_pattern),
+        "ffmpeg", "-v", "error", "-threads", str(SHORT_STRUCTURE_DECODE_THREADS),
+        "-i", str(video_path), "-an", "-sn",
+        "-vf", f"fps={SHORT_STRUCTURE_FPS},scale={SHORT_STRUCTURE_WIDTH}:{SHORT_STRUCTURE_HEIGHT},format=gray",
+        "-frames:v", str(expected + SHORT_STRUCTURE_FRAME_TOLERANCE),
+        "-f", "rawvideo", "pipe:1",
     ]
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as exc:
-        logger.error("FFmpeg diversity sampling failed for %s: %s", video_path, exc.stderr)
-        return False, 0.0, 1.0
+        result = subprocess.run(cmd, capture_output=True, check=True,
+                                timeout=SHORT_STRUCTURE_TIMEOUT_SECONDS)
+        frames = np.frombuffer(result.stdout, dtype=np.uint8).reshape(
+            -1, SHORT_STRUCTURE_HEIGHT, SHORT_STRUCTURE_WIDTH)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        logger.warning("Full-source screening failed; skipping Short", exc_info=True)
+        return None
+    if (len(frames) < SHORT_STRUCTURE_MIN_FRAMES
+            or abs(len(frames) - expected) > SHORT_STRUCTURE_FRAME_TOLERANCE
+            or len(frames) >= expected + SHORT_STRUCTURE_FRAME_TOLERANCE):
+        logger.warning("Incomplete or inconsistent full-source sample; skipping Short")
+        return None
+    return frames
 
-    frames: list[np.ndarray] = []
-    for frame_path in sorted(tmp_dir.glob("diversity_*.png")):
-        try:
-            image = Image.open(frame_path).convert("L").filter(
-                ImageFilter.GaussianBlur(radius=SHORT_DIVERSITY_BLUR_RADIUS)
-            )
-            frames.append(np.array(image, dtype=np.float32))
-        except Exception as exc:
-            logger.warning("Failed to read diversity frame %s: %s", frame_path, exc)
 
-    if len(frames) < 2:
-        return False, 0.0, 1.0
+def _loop_evidence(frames: np.ndarray) -> tuple[bool, float, float]:
+    """Find recurring sequences, not isolated similar shots.
 
-    diffs: list[float] = []
-    correlations: list[float] = []
-    for index, first in enumerate(frames):
-        for second in frames[index + 1:]:
+    Scan every lag from three seconds through half the source. Nearby sample
+    alignment tolerates non-integer periods. Require matches throughout all
+    quarters of the overlap AND a peak over incidental background similarity.
+    O(N * L * P), where P is a fixed 32x18 fingerprint and L <= N/2;
+    N is capped by the source-duration limit. No N-by-N matrix is retained.
+    """
+    fingerprints = np.stack([
+        np.asarray(Image.fromarray(frame).resize(
+            (SHORT_LOOP_WIDTH, SHORT_LOOP_HEIGHT), Image.Resampling.BILINEAR),
+            dtype=np.float32).reshape(-1)
+        for frame in frames
+    ])
+    fingerprints -= fingerprints.mean(axis=1, keepdims=True)
+    norms = np.linalg.norm(fingerprints, axis=1, keepdims=True)
+    fingerprints /= np.maximum(norms, SHORT_LOOP_EPSILON)
+    min_lag = int(SHORT_LOOP_MIN_SECONDS * SHORT_STRUCTURE_FPS)
+    min_overlap = int(SHORT_LOOP_MIN_OVERLAP_SECONDS * SHORT_STRUCTURE_FPS)
+    tolerance = SHORT_LOOP_ALIGNMENT_FRAMES
+    max_lag = min(len(frames) // 2, len(frames) - min_overlap - tolerance)
+    scores = []
+    for lag in range(min_lag, max_lag + 1):
+        count = len(frames) - lag - tolerance
+        first = fingerprints[:count]
+        correlations = np.maximum.reduce([
+            np.einsum("ij,ij->i", first, fingerprints[lag + shift:lag + shift + count])
+            for shift in range(-tolerance, tolerance + 1)
+        ])
+        matches = correlations >= SHORT_LOOP_MATCH_CORRELATION
+        coverage = float(np.mean(matches))
+        spread = min(float(np.mean(window)) for window in np.array_split(matches, SHORT_LOOP_WINDOWS))
+        scores.append((coverage, lag, spread))
+    if not scores:
+        return False, 0.0, 0.0
+    background = float(np.median([score[0] for score in scores]))
+    best = max(scores)
+    qualified = [score for score in scores
+                 if score[0] >= SHORT_LOOP_MIN_COVERAGE
+                 and score[2] >= SHORT_LOOP_MIN_WINDOW_COVERAGE
+                 and score[0] - background >= SHORT_LOOP_MIN_PEAK_MARGIN]
+    if qualified:
+        # Prefer the shortest strong peak, not a multiple of the same period.
+        best = min(qualified, key=lambda score: score[1])
+    return bool(qualified), best[1] / SHORT_STRUCTURE_FPS, best[0]
+
+
+def _visual_diversity(frames: np.ndarray) -> tuple[bool, float, float]:
+    indices = np.linspace(0, len(frames) - 1, min(SHORT_DIVERSITY_SAMPLE_COUNT, len(frames)), dtype=int)
+    samples = [np.asarray(Image.fromarray(frames[index]).filter(
+        ImageFilter.GaussianBlur(radius=SHORT_DIVERSITY_BLUR_RADIUS)), dtype=np.float32)
+        for index in indices]
+    diffs = []
+    correlations = []
+    for index, first in enumerate(samples):
+        for second in samples[index + 1:]:
             diffs.append(float(np.mean(np.abs(first - second))))
             correlations.append(_frame_correlation(first, second))
-
     median_diff = float(np.median(diffs))
     median_correlation = float(np.median(correlations))
-    is_diverse = (
-        median_diff >= SHORT_DIVERSITY_MIN_MEDIAN_DIFF
-        and median_correlation <= SHORT_DIVERSITY_MAX_MEDIAN_CORRELATION
-    )
-    return is_diverse, median_diff, median_correlation
+    return (median_diff >= SHORT_DIVERSITY_MIN_MEDIAN_DIFF
+            and median_correlation <= SHORT_DIVERSITY_MAX_MEDIAN_CORRELATION,
+            median_diff, median_correlation)
 
 
 def detect_if_music_video(
@@ -111,104 +170,46 @@ def detect_if_music_video(
     start_time: float = 0.0,
     duration: float = SHORT_DURATION_SECONDS,
     min_motion_threshold: float = SHORT_DEFAULT_MOTION_THRESHOLD,
-    sample_fps: float = 0.5,
+    sample_fps: float = SHORT_DEFAULT_SAMPLE_FPS,
     video_title: str = "",
 ) -> tuple[bool, float]:
-    """Detect whether a video is an active music video (moving content)
-    vs a static image / simple visualizer.
-    
-    Extracts sampled frames across `duration` seconds starting at `start_time`
-    using a fast single-pass FFmpeg command, and computes consecutive frame
-    pixel differences.
-    
-    Returns:
-        tuple[bool, float]: (is_music_video, average_consecutive_motion_diff)
+    """Screen moving sources for Shorts eligibility, not semantic content safety.
+
+    Reuse one full-source decode for local motion, composition, and sequence
+    repetition. Missing/failed/over-limit analysis fails closed. A positive
+    result is heuristic music-video eligibility, not proof of safe imagery.
     """
     if video_title and _AUDIO_INDICATOR_PATTERN.search(video_title):
-        logger.info(
-            "Video title '%s' contains audio/visualizer/lyric indicator; classifying as non-music video",
-            video_title,
-        )
+        logger.info("Source title contains an excluded format; skipping Short")
         return False, 0.0
-
-    if not video_path.exists():
-        logger.error("Video file not found for detection: %s", video_path)
+    if (not video_path.is_file() or not all(np.isfinite(value) for value in
+            (start_time, duration, min_motion_threshold, sample_fps))
+            or start_time < 0 or duration <= 0 or sample_fps <= 0):
         return False, 0.0
-
-    with tempfile.TemporaryDirectory() as tmp_dir_str:
-        tmp_dir = Path(tmp_dir_str)
-        out_pattern = tmp_dir / "frame_%03d.png"
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-ss", f"{start_time:.3f}",
-            "-t", f"{duration:.3f}",
-            "-i", str(video_path),
-            "-vf", f"fps={sample_fps},scale=160:90",
-            "-vsync", "vfr",
-            str(out_pattern),
-        ]
-
-        try:
-            logger.info(
-                "Sampling frames for music video detection: %s (ss=%.2f, dur=%.2f)",
-                video_path.name,
-                start_time,
-                duration,
-            )
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as e:
-            logger.error("FFmpeg frame sampling failed for %s: %s", video_path, e.stderr)
-            return False, 0.0
-
-        frame_files = sorted(tmp_dir.glob("frame_*.png"))
-        if len(frame_files) < 2:
-            logger.warning("Fewer than 2 frames extracted for %s; classifying as non-music video", video_path)
-            return False, 0.0
-
-        frames: list[np.ndarray] = []
-        for f in frame_files:
-            try:
-                img = Image.open(f).convert("L")
-                frames.append(np.array(img, dtype=np.float32))
-            except Exception as ex:
-                logger.warning("Failed to read sampled frame %s: %s", f, ex)
-
-        if len(frames) < 2:
-            return False, 0.0
-
-        diffs = [float(np.mean(np.abs(frames[i] - frames[i - 1]))) for i in range(1, len(frames))]
-        max_diff_from_first = float(max(np.mean(np.abs(f - frames[0])) for f in frames[1:]))
-        avg_diff = float(np.mean(diffs))
-
-        has_motion = (avg_diff >= min_motion_threshold) or (max_diff_from_first >= min_motion_threshold * 1.5)
-        if not has_motion:
-            logger.info(
-                "Music video detection for %s: is_music_video=False "
-                "(avg_consec_diff=%.2f, max_diff=%.2f, threshold=%.2f)",
-                video_path.name,
-                avg_diff,
-                max_diff_from_first,
-                min_motion_threshold,
-            )
-            return False, avg_diff
-
-        has_diversity, median_diff, median_correlation = _has_sustained_visual_diversity(
-            video_path, tmp_dir
-        )
-        is_music_video = has_motion and has_diversity
-
-        logger.info(
-            "Music video detection for %s: is_music_video=%s "
-            "(avg_consec_diff=%.2f, max_diff=%.2f, diversity_median_diff=%.2f, "
-            "diversity_median_correlation=%.3f, threshold=%.2f)",
-            video_path.name,
-            is_music_video,
-            avg_diff,
-            max_diff_from_first,
-            median_diff,
-            median_correlation,
-            min_motion_threshold,
-        )
-
-        return is_music_video, avg_diff
+    video_duration = _probe_duration(video_path)
+    if video_duration is None:
+        return False, 0.0
+    frames = _sample_source(video_path, video_duration)
+    if frames is None:
+        return False, 0.0
+    stride = max(1, int(round(SHORT_STRUCTURE_FPS / sample_fps)))
+    first = int(start_time * SHORT_STRUCTURE_FPS)
+    last = int((start_time + duration) * SHORT_STRUCTURE_FPS)
+    local = frames[first:last:stride].astype(np.float32)
+    if len(local) < SHORT_STRUCTURE_MIN_FRAMES:
+        return False, 0.0
+    avg_diff = float(np.mean(np.abs(np.diff(local, axis=0))))
+    peak_diff = float(np.max(np.mean(np.abs(local[1:] - local[0]), axis=(1, 2))))
+    has_motion = (avg_diff >= min_motion_threshold
+                  or peak_diff >= min_motion_threshold * SHORT_MOTION_PEAK_MULTIPLIER)
+    if not has_motion:
+        logger.info("Source lacks substantial clip motion; skipping Short")
+        return False, avg_diff
+    repeated, period, coverage = _loop_evidence(frames)
+    diverse, median_diff, median_corr = _visual_diversity(frames)
+    eligible = bool(diverse and not repeated)
+    logger.info(
+        "Music-video screening: eligible=%s repeated=%s period_seconds=%.2f "
+        "match_coverage=%.3f motion=%.2f diversity_diff=%.2f diversity_corr=%.3f frames=%d",
+        eligible, repeated, period, coverage, avg_diff, median_diff, median_corr, len(frames))
+    return eligible, avg_diff

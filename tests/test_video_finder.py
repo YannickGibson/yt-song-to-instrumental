@@ -121,3 +121,25 @@ class TestFindAndVerifyMusicVideo:
         assert diff == 0.0
         assert video_url is None
         assert not mock_file.exists()  # Ensure cleaned up
+
+
+@patch("yt_dlp.YoutubeDL")
+def test_rejects_shared_word_and_other_artist(mock_ydl_cls):
+    mock_ydl_cls.return_value.__enter__.return_value.extract_info.return_value = {
+        "entries": [
+            {"id": "wrongartist", "title": "Other Artist - Speak Again (Official Video)", "uploader": "Other Artist", "duration": 180},
+            {"id": "wrongtrack", "title": "Example Artist - Again (Official Video)", "uploader": "Example Artist", "duration": 180},
+            {"id": "match", "title": "Example Artist - Speak Again (Official Video)", "uploader": "Director", "duration": 180},
+        ]}
+    candidates = search_music_video_candidates("Example Artist", "Speak Again", 180)
+    assert [c["id"] for c in candidates] == ["match"]
+
+
+@patch("yt_song_to_instrumental.video_finder.get_channel_videos")
+def test_channel_requires_entire_song_title(mock_entries):
+    mock_entries.return_value = [
+        {"id": "wrong", "title": "Again (Official Video)", "duration": 180},
+        {"id": "right", "title": "Speak Again (Official Video)", "duration": 180},
+    ]
+    candidates = search_channel_candidates("channel", "Example Artist - Speak Again", 180, artist="Example Artist")
+    assert [c["id"] for c in candidates] == ["right"]

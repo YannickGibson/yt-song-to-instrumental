@@ -6,7 +6,7 @@ Download songs from YouTube, extract instrumentals using AI source separation, a
 
 ## Features
 
-- **Switchable ML models** — HTDemucs, UVR-MDX-NET Inst_HQ_4, or add your own
+- **Switchable ML models** — HTDemucs, UVR-MDX-NET Inst_HQ_4, or the MPS instrumental preset
 - **Automated YouTube uploads** — OAuth2, resumable uploads, privacy controls
 - **Playlist management** — auto-creates per-artist and per-album playlists
 - **Configurable templates** — video titles, descriptions, and playlist names use `<tag>` syntax
@@ -27,6 +27,15 @@ Download songs from YouTube, extract instrumentals using AI source separation, a
 |-------|----|---------|-------------|----------|-------|
 | HTDemucs | `htdemucs` | 4 GB | No (recommended) | 2 GB+ | 4-stem demucs v4. Measured ~7x realtime on Pi 4. |
 | UVR-MDX-NET Inst_HQ_4 | `inst_hq_4` | 3 GB | No (recommended) | 1 GB+ | ONNX via `audio-separator`. 2-stem vocals/instrumental. Cleaner vocal removal but ~12x realtime on Pi 4 — best on x86/GPU. |
+| MelBand RoFormer INSTV7N | `mel_gabox_instv7n` | 8 GB budget estimate; minimum unverified | MPS required | Shared system memory | Native FP16 with protected FP32 parameters, overlap 4, model-default segments, and two CPU threads. |
+
+The MPS backend requires `audio-separator[cpu]==0.47.0`, `torch==2.14.0`, and
+`demucs==4.1.0` in a separate environment. The legacy CPU extras and lockfile
+have incompatible version constraints and must not synchronize this environment.
+Invoke its installed executable directly. Set
+`AUDIO_SEPARATOR_MODEL_DIR` to a persistent checkpoint cache if desired.
+Published source videos are recognized across model changes, and pending Shorts
+retain their historical model and original upload association.
 
 ## Setup
 
@@ -128,8 +137,8 @@ normal source item.
 `--priority-short` requires the requested track's long-form instrumental and a
 verified music-video Short, in that order, even when routine Shorts are paused.
 `--priority-short-start` selects the Short's synchronized audio/video content
-offset in seconds. The request remains incomplete until both uploads are
-recorded in SQLite.
+offset in seconds (defaults to 10% of the video duration). The request
+remains incomplete until both uploads are recorded in SQLite.
 
 Python callers can use the same enqueue operation directly:
 
@@ -179,9 +188,9 @@ Used in `label.yml` for video titles, descriptions, and playlist names:
 
 The pipeline can automatically generate and upload 20-second vertical YouTube Shorts teasers (1080×1920 with 20% top/bottom black bars) for instrumental tracks:
 
-- **`upload_short_if_music_video: true`**: Automatically checks whether the source YouTube video is an active music video using low-overhead frame difference motion detection, skipping static album covers and simple visualizers.
-- **`upload_short: true`**: Uploads Shorts for all processed tracks unconditionally.
-- **Audio/Video Sync**: Automatically aligns video slicing with the instrumental start trim offset.
+- **`upload_short_if_music_video: true`**: Automatically checks whether the source YouTube video is an active music video using the original, unmodified YouTube title plus motion and scene-diversity checks. Explicit audio/visualizer titles and static or flashing artwork are rejected. Missing source metadata fails closed. Fallback videos must match the full song title and artist (or come from the configured official channel); one shared word is never enough.
+- **`upload_short: true`**: Requests Shorts for processed tracks, still subject to the same source validation; it cannot bypass visualizer rejection.
+- **Audio/Video Sync**: Matches the original release audio against the music-video soundtrack, then applies the instrumental's silence-trim offset. Intros and earlier cuts can have different video/audio start times. Every second of the selected 20-second passage must agree, so pauses, edits, tempo drift, unrelated audio, and ambiguous matches cannot silently produce an out-of-sync upload. Automatic selection can try nearby continuous passages; an explicit `--priority-short-start` keeps the exact requested instrumental offset. Missing or uncertain audio matches record a retryable `audio_alignment_failed` status and do not upload a Short. Analysis is bounded to recordings of at most 15 minutes. Existing published Shorts remain unchanged.
 - **Titles & Descriptions**: Automatically formats titles as `<song name> (Instrumental)` and inserts the link to the full instrumental video.
 
 ## Playlist Management
@@ -230,6 +239,11 @@ This project is not affiliated with, endorsed by, or sponsored by YouTube or Goo
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+Short teaser titles end with the resolved primary artist in square brackets:
+`Song (Instrumental Teaser) [Artist]`. The suffix is retained within the YouTube
+100-character title limit. Already-posted videos are not retitled automatically.
 
 ### Resumable playlist repair
 

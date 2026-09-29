@@ -180,7 +180,13 @@ def main() -> None:
     parser.add_argument("--no-upload-short", action="store_true", help="Do not upload Shorts in this run")
     parser.add_argument("--enqueue-priority", metavar="YOUTUBE_URL", help="Put one requested video at the front of the upload queue, then exit")
     parser.add_argument("--priority-short", action="store_true", help="Require a Short after the priority instrumental, even when regular Shorts are disabled")
-    parser.add_argument("--priority-short-start", type=float, default=0.0, metavar="SECONDS", help="Start the requested Short this many seconds into the song")
+    parser.add_argument(
+        "--priority-short-start",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Start the requested Short this many seconds into the song (defaults to precise half of the video)",
+    )
     parser.add_argument("--list-priority", action="store_true", help="List priority instrumental requests, then exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
@@ -213,13 +219,17 @@ def main() -> None:
             f"{request.url}"
         )
         if request.upload_short:
-            print(
-                "Requested outputs: instrumental, then Short "
+            start_desc = (
                 f"starting at {request.short_start_seconds:g}s"
+                if request.short_start_seconds is not None
+                else "starting at precise half of the video"
+            )
+            print(
+                f"Requested outputs: instrumental, then Short {start_desc}"
             )
         return
 
-    if args.priority_short or args.priority_short_start:
+    if args.priority_short or args.priority_short_start is not None:
         parser.error("--priority-short options require --enqueue-priority")
 
     if args.list_priority:
@@ -237,7 +247,12 @@ def main() -> None:
         for request in requests:
             line = f"#{request.id} [{request.status}] {request.url}"
             if request.upload_short:
-                line += f" [Short at {request.short_start_seconds:g}s]"
+                start_desc = (
+                    f"Short at {request.short_start_seconds:g}s"
+                    if request.short_start_seconds is not None
+                    else "Short at video midpoint"
+                )
+                line += f" [{start_desc}]"
             if request.error:
                 line += f" ({request.error})"
             print(line)

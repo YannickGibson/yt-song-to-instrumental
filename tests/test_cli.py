@@ -78,6 +78,75 @@ class TestArgParsing:
         mock_load_label.assert_not_called()
         assert "first in queue" in capsys.readouterr().out
 
+    def test_enqueue_priority_with_short_default_offset(self, capsys):
+        request = PriorityRequest(
+            id=8,
+            url="https://www.youtube.com/watch?v=QueueItem02",
+            requested_at="2026-09-05T00:00:00+00:00",
+            status="pending",
+            started_at=None,
+            finished_at=None,
+            error="",
+            upload_short=1,
+            short_start_seconds=None,
+        )
+        with patch("yt_song_to_instrumental.cli.enqueue_priority_request", return_value=request) as mock_enqueue, \
+             patch("yt_song_to_instrumental.cli.load_label_config") as mock_load_label, \
+             patch.object(
+                 sys,
+                 "argv",
+                 [
+                     "yt-instrumental",
+                     "--enqueue-priority",
+                     request.url,
+                     "--priority-short",
+                 ],
+             ):
+            main()
+
+        assert mock_enqueue.call_args.args[0] == request.url
+        assert mock_enqueue.call_args.kwargs["upload_short"] is True
+        assert mock_enqueue.call_args.kwargs["short_start_seconds"] is None
+        mock_load_label.assert_not_called()
+        out = capsys.readouterr().out
+        assert "first in queue" in out
+        assert "starting at precise half of the video" in out
+
+    def test_list_priority_formatting(self, capsys):
+        requests = [
+            PriorityRequest(
+                id=1,
+                url="https://www.youtube.com/watch?v=QueueItem01",
+                requested_at="2026-09-05T00:00:00+00:00",
+                status="pending",
+                started_at=None,
+                finished_at=None,
+                error="",
+                upload_short=1,
+                short_start_seconds=None,
+            ),
+            PriorityRequest(
+                id=2,
+                url="https://www.youtube.com/watch?v=QueueItem02",
+                requested_at="2026-09-05T00:00:01+00:00",
+                status="pending",
+                started_at=None,
+                finished_at=None,
+                error="",
+                upload_short=1,
+                short_start_seconds=42.0,
+            ),
+        ]
+        mock_history = MagicMock()
+        mock_history.list_priority_requests.return_value = requests
+        with patch("yt_song_to_instrumental.cli.HistoryDB", return_value=mock_history), \
+             patch.object(sys, "argv", ["yt-instrumental", "--list-priority"]):
+            main()
+
+        out = capsys.readouterr().out
+        assert "#1 [pending] https://www.youtube.com/watch?v=QueueItem01 [Short at video midpoint]" in out
+        assert "#2 [pending] https://www.youtube.com/watch?v=QueueItem02 [Short at 42s]" in out
+
     def test_url_required_when_no_sources(self):
         cfg = _make_label_config(sources=[])
         with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \

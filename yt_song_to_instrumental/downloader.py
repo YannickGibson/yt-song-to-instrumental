@@ -398,7 +398,6 @@ def download_tracks(
         "retries": YTDLP_RETRIES,
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "ios"]}},
     }
 
     results: list[DownloadedTrack] = []
@@ -541,7 +540,6 @@ def download_track_audio(url_or_video_id: str, tmp_dir: Path) -> Path | None:
         "retries": YTDLP_RETRIES,
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "ios"]}},
     }
     try:
         with yt_dlp.YoutubeDL(download_opts) as ydl:

@@ -24,12 +24,13 @@
 11. Do not use public artists or company names in the tests or anywhere in the non gitignored parts of the project.
 12. Add requested songs with `enqueue_priority_request()` or `--enqueue-priority`; never start a second pipeline alongside `yt-instrumental.service`. After enqueueing a user-requested song, restart the user service with `systemctl --user restart --no-block yt-instrumental.service` so the updated worker claims it immediately, then verify the request is claimed from the service output.
 13. Priority requests persist in the `priority_requests` table and must run through the normal pipeline so `downloads`, `separations`, `uploads`, and playlists remain authoritative.
-14. A priority request may take the next safe slot between tracks, but must never interrupt separation, rendering, or upload in progress.
+14. Prefer restarting between tracks. Inspect active stages before necessary restarts, preserve completed records, and verify recovery. Interrupted work must remain retryable. Reconcile potentially completed external uploads before retrying, and never start a second pipeline.
 15. Preserve crash and power-loss recovery: commit a stage to SQLite only after its durable output is complete, leave incomplete normal stages eligible for retry, and requeue priority requests left in `processing` when the next worker starts.
 16. Add recovery tests whenever changing stage persistence, priority claim/completion behavior, or shutdown handling.
 17. Code changes are not complete until the full local test suite passes and the corresponding GitHub Actions CI run finishes successfully. Never treat local tests alone as final verification.
 18. This is a public repository. Never commit credentials, tokens, `.env`, `label.yml`, database/media artifacts, or artist/label-specific names and configuration. Keep tests, fixtures, docs, branch names, commit messages, and PR text generic.
 19. Priority requests may require a Short and a per-request Short content offset. Preserve instrumental-before-Short ordering, synchronized audio/video offsets, and completion only after every requested upload is durably recorded.
+20. Use generic branches, commits, and content; exclude private deployment details.
 
 ## Daily maintenance
 - Check the user service and timer, recent failures, SQLite queue/stage state, disk/memory headroom, and whether work is making progress.
@@ -55,6 +56,13 @@ When adding a new separation model backend, document its requirements here AND i
 |-------|---------|-------------|----------|-------|
 | HTDemucs | 4 GB | No (but recommended) | 2 GB+ | 4-stem demucs v4. Measured ~7x realtime on Pi 4 (4 GB). |
 | Inst_HQ_4 | 3 GB | No (but recommended) | 1 GB+ | UVR-MDX-NET via ONNX (audio-separator). 2-stem vocals/instrumental. Cleaner vocal removal than HTDemucs but ~12x realtime on Pi 4 — best on x86/GPU. |
+| MelBand RoFormer INSTV7N | 8 GB budget estimate; minimum unverified | MPS required | Shared system memory | `mel_gabox_instv7n`: native FP16 with protected FP32 parameters, overlap 4, model-default segments, two CPU threads. |
+
+The MPS backend requires audio-separator 0.47.0, torch 2.14.0 and demucs 4.1.0
+in a separate environment; the legacy CPU extras/lockfile are incompatible.
+`AUDIO_SEPARATOR_MODEL_DIR` can select the persistent
+checkpoint cache. A change of default model must preserve source-level upload
+deduplication and historical model associations for remaining Shorts.
 
 ## CI & Test dependencies
 - When running tests in CI (`.github/workflows/ci.yml`) or in fresh environments, install dependencies with `uv sync --extra dev --extra all-models` (or `uv sync --all-extras`).
