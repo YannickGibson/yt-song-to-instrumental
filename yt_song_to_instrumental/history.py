@@ -86,6 +86,10 @@ CREATE TABLE IF NOT EXISTS pending_playlist_assignments (
     assignment_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS completed_playlist_assignments (
+    youtube_video_id TEXT PRIMARY KEY
+);
+
 CREATE TABLE IF NOT EXISTS downloads (
     video_id TEXT PRIMARY KEY,
     url TEXT NOT NULL,
@@ -294,10 +298,21 @@ class HistoryDB:
 
     def complete_playlist_assignment(self, youtube_video_id: str) -> None:
         self._conn.execute(
+            "INSERT OR IGNORE INTO completed_playlist_assignments VALUES (?)",
+            (youtube_video_id,),
+        )
+        self._conn.execute(
             "DELETE FROM pending_playlist_assignments WHERE youtube_video_id = ?",
             (youtube_video_id,),
         )
         self._conn.commit()
+
+    def has_playlist_assignment(self, youtube_video_id: str) -> bool:
+        return self._conn.execute(
+            "SELECT youtube_video_id FROM completed_playlist_assignments WHERE youtube_video_id = ? "
+            "UNION SELECT youtube_video_id FROM pending_playlist_assignments WHERE youtube_video_id = ?",
+            (youtube_video_id, youtube_video_id),
+        ).fetchone() is not None
 
     def pending_playlist_assignments(self, limit: int) -> list[dict]:
         rows = self._conn.execute(

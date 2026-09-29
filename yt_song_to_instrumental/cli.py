@@ -19,10 +19,16 @@ from yt_song_to_instrumental.constants import (
     LABEL_CONFIG_EXAMPLE_FILENAME,
     LABEL_CONFIG_FILENAME,
     VALID_PRIVACY_STATUSES,
+    PLAYLIST_RETRY_OPTION,
+    PLAYLIST_RETRY_HELP,
+    PLAYLIST_RETRY_REPORT,
+    PLAYLIST_RECOVERY_BATCH_SIZE,
 )
 from yt_song_to_instrumental.history import HistoryDB
 from yt_song_to_instrumental.pipeline import PipelineReport, process_url
 from yt_song_to_instrumental.preview import PreviewReport, preview_url
+from yt_song_to_instrumental.playlists import queue_unassigned_shorts, retry_playlist_assignments
+from yt_song_to_instrumental.uploader import authenticate
 from yt_song_to_instrumental.priority import (
     enqueue_priority_request,
     process_priority_requests,
@@ -190,6 +196,7 @@ def main() -> None:
     parser.add_argument("--list-priority", action="store_true", help="List priority instrumental requests, then exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
+    parser.add_argument(PLAYLIST_RETRY_OPTION, action="store_true", help=PLAYLIST_RETRY_HELP)
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -258,6 +265,22 @@ def main() -> None:
             print(line)
         return
 
+    if args.retry_playlists:
+        if args.url or args.skip_upload or args.dry_run:
+            parser.error(PLAYLIST_RETRY_HELP)
+        app_config = AppConfig()
+        label_config = _load_label_config_or_exit()
+        yt_config = _youtube_config_or_exit()
+        service = authenticate(yt_config.client_secrets_file, yt_config.token_file)
+        history = HistoryDB(app_config.db_path)
+        try:
+            queue_unassigned_shorts(history)
+            retry_playlist_assignments(service, history, label_config, limit=PLAYLIST_RECOVERY_BATCH_SIZE)
+        finally:
+            history.close()
+        print(PLAYLIST_RETRY_REPORT)
+        return
+
     if args.cleanup_uploaded:
         from pathlib import Path
         from yt_song_to_instrumental.cleanup import (
@@ -285,7 +308,6 @@ def main() -> None:
     if args.sync_channel:
         label_config = _load_label_config_or_exit()
         yt_config = _youtube_config_or_exit()
-        from yt_song_to_instrumental.uploader import authenticate
         from yt_song_to_instrumental.channel import sync_channel_metadata
         service = authenticate(yt_config.client_secrets_file, yt_config.token_file)
         sync_channel_metadata(service, label_config)
@@ -382,7 +404,6 @@ def main() -> None:
         service = None
         if not args.skip_upload:
             yt_config = _youtube_config_or_exit()
-            from yt_song_to_instrumental.uploader import authenticate
             service = authenticate(yt_config.client_secrets_file, yt_config.token_file)
 
         upload_timeout_seconds = args.upload_timeout * 60 if args.upload_timeout else None

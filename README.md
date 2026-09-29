@@ -9,6 +9,7 @@ Download songs from YouTube, extract instrumentals using AI source separation, a
 - **Switchable ML models** — HTDemucs, UVR-MDX-NET Inst_HQ_4, or the MPS instrumental preset
 - **Automated YouTube uploads** — OAuth2, resumable uploads, privacy controls
 - **Playlist management** — auto-creates per-artist and per-album playlists
+- **Shorts playlist** — existing and future Shorts join the shared `shorts` playlist
 - **Configurable templates** — video titles, descriptions, and playlist names use `<tag>` syntax
 - **Duplicate detection** — SQLite tracking DB prevents re-processing/re-uploading
 - **Quality gate** — checks for silence and minimum duration before upload
@@ -112,6 +113,13 @@ Edit `label.yml` with your label's name, metadata templates, and — most import
 5. On first run, a browser will open for OAuth consent
 
 ## Usage
+
+Playlist additions continue while older ordering issues are repaired separately.
+Failed memberships persist in SQLite and retry without uploading videos again;
+one unavailable playlist does not block the other destinations. Run
+`yt-instrumental --retry-playlists` to retry queued memberships and backfill
+recorded Shorts without starting audio processing or video uploads. Recovery
+shares the API budget with the worker and resumes on a later run after quota resets.
 
 Once `label.yml` is configured, the everyday command takes **no arguments**:
 

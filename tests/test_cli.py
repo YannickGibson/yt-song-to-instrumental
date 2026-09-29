@@ -44,6 +44,26 @@ class TestListModels:
 
 
 class TestArgParsing:
+    def test_playlist_retry_never_starts_media_pipeline(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["yt-instrumental", "--retry-playlists"])
+        monkeypatch.setattr("yt_song_to_instrumental.cli.AppConfig", MagicMock())
+        monkeypatch.setattr("yt_song_to_instrumental.cli._load_label_config_or_exit", MagicMock())
+        monkeypatch.setattr("yt_song_to_instrumental.cli._youtube_config_or_exit", MagicMock())
+        monkeypatch.setattr("yt_song_to_instrumental.cli.authenticate", MagicMock())
+        history = MagicMock()
+        monkeypatch.setattr("yt_song_to_instrumental.cli.HistoryDB", MagicMock(return_value=history))
+        seed = MagicMock()
+        retry = MagicMock()
+        pipeline = MagicMock()
+        monkeypatch.setattr("yt_song_to_instrumental.cli.queue_unassigned_shorts", seed)
+        monkeypatch.setattr("yt_song_to_instrumental.cli.retry_playlist_assignments", retry)
+        monkeypatch.setattr("yt_song_to_instrumental.cli.process_url", pipeline)
+        main()
+        seed.assert_called_once_with(history)
+        retry.assert_called_once()
+        history.close.assert_called_once()
+        pipeline.assert_not_called()
+
     def test_enqueue_priority_exits_without_loading_label_config(self, capsys):
         request = PriorityRequest(
             id=7,

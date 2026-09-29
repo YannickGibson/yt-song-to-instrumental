@@ -1,6 +1,9 @@
 from unittest.mock import MagicMock
+import json
 
 import pytest
+from googleapiclient.errors import HttpError
+from httplib2 import Response
 
 from yt_song_to_instrumental.history import HistoryDB
 from yt_song_to_instrumental.playlists import assign_to_playlists, retry_playlist_assignments
@@ -35,14 +38,10 @@ def test_duplicate_beyond_first_page_is_not_inserted():
     assert service.playlistItems().list.call_args.kwargs["pageToken"] == "next"
 
 
-@pytest.mark.parametrize("failure", [RuntimeError("offline"), page("unknown")])
-def test_failed_or_unknown_read_never_blindly_appends(failure):
+def test_failed_read_never_blindly_appends():
     service = MagicMock()
-    if isinstance(failure, Exception):
-        service.playlistItems().list().execute.side_effect = failure
-    else:
-        service.playlistItems().list().execute.return_value = failure
-    with pytest.raises((RuntimeError, ValueError)):
+    service.playlistItems().list().execute.side_effect = RuntimeError("offline")
+    with pytest.raises(RuntimeError):
         add_video_to_playlist(service, "playlist", "new", ranks={"new": 0})
     service.playlistItems().insert.assert_not_called()
 
@@ -78,9 +77,39 @@ def test_assignment_uses_persisted_release_order():
         assert call.kwargs["body"]["snippet"]["position"] == 0
 
 
-def test_existing_inversions_queue_instead_of_adding_more_disorder():
+def test_existing_inversions_do_not_block_new_membership():
     service = MagicMock()
     service.playlistItems().list().execute.return_value = page("old", "new")
-    with pytest.raises(ValueError, match="existing order"):
-        add_video_to_playlist(service, "playlist", "middle", ranks={"new": 0, "middle": 1, "old": 2})
-    service.playlistItems().insert.assert_not_called()
+    add_video_to_playlist(service, "playlist", "middle", ranks={"new": 0, "middle": 1, "old": 2})
+    assert service.playlistItems().insert.call_args.kwargs["body"]["snippet"]["position"] == 0
+
+
+def test_unknown_metadata_does_not_block_membership_after_complete_read():
+    service = MagicMock()
+    service.playlistItems().list().execute.return_value = page("unknown", "old")
+    add_video_to_playlist(service, "playlist", "new", ranks={"new": 0, "old": 2})
+    assert service.playlistItems().insert.call_args.kwargs["body"]["snippet"]["position"] == 1
+
+
+def test_failed_channel_assignment_does_not_skip_artist(tmp_path):
+    db = HistoryDB(tmp_path / "history.db")
+    service = _make_mock_service()
+    service.playlistItems().insert().execute.side_effect = [RuntimeError("channel unavailable"), {"id": "artist-item"}]
+    service.playlistItems().insert.reset_mock()
+    with pytest.raises(RuntimeError):
+        assign_to_playlists(service, db, _make_label_config(), "upload", "Artist", "", "Artist")
+    assert service.playlistItems().insert.call_count == 2
+    assert len(db.pending_playlist_assignments(5)) == 1
+
+
+def test_automatic_sorting_rejection_retries_without_position():
+    service = MagicMock()
+    service.playlistItems().list().execute.return_value = page()
+    error = HttpError(Response({"status": 400}), json.dumps({
+        "error": {"errors": [{"reason": "manualSortRequired"}], "message": "Automatic sorting"},
+    }).encode())
+    service.playlistItems().insert().execute.side_effect = [error, {"id": "new-item"}]
+    service.playlistItems().insert.reset_mock()
+    add_video_to_playlist(service, "playlist", "upload")
+    assert service.playlistItems().insert.call_count == 2
+    assert "position" not in service.playlistItems().insert.call_args.kwargs["body"]["snippet"]

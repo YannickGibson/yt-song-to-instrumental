@@ -10,6 +10,8 @@ from yt_song_to_instrumental.cleanup import cleanup_track_artifacts
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.constants import (
     MODEL_DISPLAY_NAMES,
+    PLAYLIST_RETRY_BATCH_SIZE,
+    PLAYLIST_RECOVERY_BATCH_SIZE,
     SHORT_ALIGNMENT_AUDIO_SUFFIX,
     SHORT_ALIGNMENT_ERROR_LOG,
     SHORT_ALIGNMENT_FAILED,
@@ -27,7 +29,7 @@ from yt_song_to_instrumental.history import DownloadRecord, HistoryDB
 from yt_song_to_instrumental.metadata import render_description, render_short_title, render_video_title, strip_topic_suffix
 from yt_song_to_instrumental.playlists import (
     assign_to_playlists, split_artists, sort_tracks_newest_first_preserve_albums,
-    sort_tracks_for_playlist_insertion, retry_playlist_assignments,
+    sort_tracks_for_playlist_insertion, retry_playlist_assignments, queue_unassigned_shorts,
 )
 from yt_song_to_instrumental.playlist_repair import repair_due
 from yt_song_to_instrumental.quality import _get_duration, check_quality
@@ -147,8 +149,10 @@ def process_url(
     )
 
     if not skip_upload:
-        repair_due(service, history)
-        retry_playlist_assignments(service, history, label_config)
+        queue_unassigned_shorts(history)
+        retry_playlist_assignments(service, history, label_config, limit=PLAYLIST_RECOVERY_BATCH_SIZE)
+        if not history.pending_playlist_assignments(PLAYLIST_RETRY_BATCH_SIZE):
+            repair_due(service, history)
 
     target_ids: set[str] | None = None
     if _is_single_video_url(url):
@@ -177,7 +181,9 @@ def process_url(
         force_short=force_short,
     ):
         if not skip_upload:
-            repair_due(service, history)
+            retry_playlist_assignments(service, history, label_config)
+            if not history.pending_playlist_assignments(PLAYLIST_RETRY_BATCH_SIZE):
+                repair_due(service, history)
         if before_track is not None:
             before_track()
         artist = artist_override or track.artist
@@ -645,6 +651,17 @@ def _upload_short_track(
         ctx.history.record_short_status(
             track.video_id, ctx.model, "upload_failed", is_music_video=is_music_vid
         )
+        return
+
+    try:
+        assign_to_playlists(
+            ctx.service, ctx.history, ctx.label_config, short_yt_id,
+            artist, album, primary_artist, privacy=ctx.privacy,
+            track_title=track.title, is_short=True,
+        )
+    except Exception as error:
+        # The upload is durable even when its playlist assignment needs retrying.
+        logger.warning("Short playlist assignment remains queued: %s", error)
 
 
 def _upload_track(
