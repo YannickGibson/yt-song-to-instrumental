@@ -8,6 +8,8 @@ from yt_song_to_instrumental.constants import (
     DATA_DIR,
     DB_FILENAME,
     HISTORY_EXISTING_UPLOAD_QUERY,
+    HISTORY_LATEST_UPLOAD_QUERY,
+    HISTORY_UPLOAD_TIMESTAMP_COLUMN,
     PRIORITY_STATUS_COMPLETED,
     PRIORITY_STATUS_FAILED,
     PRIORITY_STATUS_PENDING,
@@ -355,6 +357,14 @@ class HistoryDB:
         return SeparationRecord(**fields)
 
     # --- Uploads ---
+
+    def latest_upload_time(self) -> datetime | None:
+        """Return the latest durable instrumental or Short upload across models."""
+        row = self._conn.execute(HISTORY_LATEST_UPLOAD_QUERY).fetchone()
+        if row is None:
+            return None
+        timestamp = datetime.fromisoformat(row[HISTORY_UPLOAD_TIMESTAMP_COLUMN])
+        return timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp
 
     def get_existing_upload(self, video_id: str) -> UploadRecord | None:
         """Return the first durable long-form upload, regardless of model.

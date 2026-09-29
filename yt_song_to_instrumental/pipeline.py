@@ -34,6 +34,7 @@ from yt_song_to_instrumental.quality import _get_duration, check_quality
 from yt_song_to_instrumental.separator import get_separator
 from yt_song_to_instrumental.separator.base import SeparatorBackend
 from yt_song_to_instrumental.thumbnail import get_thumbnail_for_track
+from yt_song_to_instrumental.upload_pacing import wait_for_upload_slot
 from yt_song_to_instrumental.uploader import upload_video
 from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title
 from yt_song_to_instrumental.video_finder import find_and_verify_music_video
@@ -622,6 +623,7 @@ def _upload_short_track(
     )
 
     try:
+        wait_for_upload_slot(ctx.history, ctx.label_config.upload_interval_seconds)
         short_yt_id = upload_video(
             ctx.service,
             short_video_path,
@@ -786,6 +788,7 @@ def _upload_track(
     )
 
     try:
+        wait_for_upload_slot(ctx.history, ctx.label_config.upload_interval_seconds)
         yt_video_id = upload_video(
             ctx.service, video_path, title, description, ctx.privacy,
             max_total_wait_seconds=ctx.upload_max_wait_seconds,

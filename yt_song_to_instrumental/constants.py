@@ -323,3 +323,19 @@ SHORT_REJECT_TITLE_PATTERN = (
     r"\b(?:audio|visuali[sz]er|lyric(?:s|\s+video)?|trailer|teaser|snippet|"
     r"concert|live\s+(?:at|in|performance))\b"
 )
+
+# One shared upload cadence for instrumentals and Shorts, across model changes.
+DEFAULT_UPLOAD_INTERVAL_SECONDS = 0.0
+UPLOAD_INTERVAL_CONFIG_KEY = "upload_interval_seconds"
+UPLOAD_INTERVAL_CONFIG_ERROR = "upload_interval_seconds must be a finite, nonnegative number"
+UPLOAD_PACING_WAIT_LOG = "Upload pacing: waiting %.1f seconds before the next upload"
+HISTORY_UPLOAD_TIMESTAMP_COLUMN = "uploaded_at"
+HISTORY_LATEST_UPLOAD_QUERY = """
+SELECT uploaded_at FROM (
+    SELECT uploaded_at FROM uploads WHERE youtube_upload_id != ''
+    UNION ALL
+    SELECT short_uploaded_at AS uploaded_at FROM uploads
+    WHERE youtube_short_upload_id != ''
+)
+ORDER BY julianday(uploaded_at) DESC LIMIT 1
+"""

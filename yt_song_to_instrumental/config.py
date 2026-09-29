@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 
 import yaml
@@ -12,9 +13,12 @@ from yt_song_to_instrumental.constants import (
     AVAILABLE_MODELS,
     DEFAULT_MODEL,
     DEFAULT_PRIVACY_STATUS,
+    DEFAULT_UPLOAD_INTERVAL_SECONDS,
     LABEL_CONFIG_FILENAME,
     DEFAULT_TRIM_SILENCE,
     DEFAULT_TRIM_THRESHOLD_DB,
+    UPLOAD_INTERVAL_CONFIG_ERROR,
+    UPLOAD_INTERVAL_CONFIG_KEY,
 )
 
 _AFTER_DATE_RE = re.compile(AFTER_DATE_PATTERN)
@@ -203,6 +207,19 @@ class LabelConfig:
         self.trim_silence: bool = raw_trim_silence if raw_trim_silence is not None else DEFAULT_TRIM_SILENCE
         raw_trim_threshold_db = data.get("trim_silence_threshold_db")
         self.trim_silence_threshold_db: float = raw_trim_threshold_db if raw_trim_threshold_db is not None else DEFAULT_TRIM_THRESHOLD_DB
+
+        # Optional shared upload cadence; disabled for existing configurations.
+        raw_interval = data.get(UPLOAD_INTERVAL_CONFIG_KEY)
+        if raw_interval is None:
+            raw_interval = DEFAULT_UPLOAD_INTERVAL_SECONDS
+        if (
+            isinstance(raw_interval, bool)
+            or not isinstance(raw_interval, (int, float))
+            or not isfinite(raw_interval)
+            or raw_interval < DEFAULT_UPLOAD_INTERVAL_SECONDS
+        ):
+            raise ValueError(UPLOAD_INTERVAL_CONFIG_ERROR)
+        self.upload_interval_seconds = float(raw_interval)
 
         # Optional YouTube Shorts upload configuration
         self.upload_short: bool = bool(data.get("upload_short", False))

@@ -139,3 +139,21 @@ def test_already_uploaded_short_remains_untouched(short_case):
     align.assert_not_called()
     render.assert_not_called()
     upload.assert_not_called()
+
+
+def test_forced_short_waits_and_interrupted_wait_preserves_instrumental(short_case):
+    ctx, track, _, _, upload, _, _ = short_case
+    ctx.label_config.upload_interval_seconds = 1200
+    with patch("yt_song_to_instrumental.pipeline.wait_for_upload_slot", side_effect=KeyboardInterrupt) as wait:
+        with pytest.raises(KeyboardInterrupt):
+            _run(ctx, track)
+        wait.assert_called_once_with(ctx.history, 1200)
+    upload.assert_not_called()
+    assert ctx.history.get_existing_upload(track.video_id).youtube_upload_id == "existing-full"
+    assert not ctx.history.is_short_uploaded(track.video_id, ctx.model)
+
+    with patch("yt_song_to_instrumental.pipeline.wait_for_upload_slot") as wait:
+        _run(ctx, track)
+        wait.assert_called_once_with(ctx.history, 1200)
+    upload.assert_called_once()
+    assert ctx.history.is_short_uploaded(track.video_id, ctx.model)
