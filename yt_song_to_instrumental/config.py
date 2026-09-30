@@ -14,11 +14,14 @@ from yt_song_to_instrumental.constants import (
     DEFAULT_MODEL,
     DEFAULT_PRIVACY_STATUS,
     DEFAULT_UPLOAD_INTERVAL_SECONDS,
+    DEFAULT_UPLOAD_INTERVAL_JITTER_SECONDS,
     LABEL_CONFIG_FILENAME,
     DEFAULT_TRIM_SILENCE,
     DEFAULT_TRIM_THRESHOLD_DB,
     UPLOAD_INTERVAL_CONFIG_ERROR,
     UPLOAD_INTERVAL_CONFIG_KEY,
+    UPLOAD_INTERVAL_JITTER_CONFIG_ERROR,
+    UPLOAD_INTERVAL_JITTER_CONFIG_KEY,
 )
 
 _AFTER_DATE_RE = re.compile(AFTER_DATE_PATTERN)
@@ -220,6 +223,18 @@ class LabelConfig:
         ):
             raise ValueError(UPLOAD_INTERVAL_CONFIG_ERROR)
         self.upload_interval_seconds = float(raw_interval)
+        raw_jitter = data.get(UPLOAD_INTERVAL_JITTER_CONFIG_KEY)
+        if raw_jitter is None:
+            raw_jitter = DEFAULT_UPLOAD_INTERVAL_JITTER_SECONDS
+        if (
+            isinstance(raw_jitter, bool)
+            or not isinstance(raw_jitter, (int, float))
+            or not isfinite(raw_jitter)
+            or raw_jitter < DEFAULT_UPLOAD_INTERVAL_JITTER_SECONDS
+            or raw_jitter > self.upload_interval_seconds
+        ):
+            raise ValueError(UPLOAD_INTERVAL_JITTER_CONFIG_ERROR)
+        self.upload_interval_jitter_seconds = float(raw_jitter)
 
         # Optional YouTube Shorts upload configuration
         self.upload_short: bool = bool(data.get("upload_short", False))

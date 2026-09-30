@@ -6,7 +6,7 @@ import pytest
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.history import HistoryDB
 from yt_song_to_instrumental.pipeline import process_url
-from yt_song_to_instrumental.upload_pacing import wait_for_upload_slot
+from yt_song_to_instrumental.upload_pacing import _target_interval_seconds, wait_for_upload_slot
 
 
 @pytest.fixture
@@ -50,8 +50,54 @@ def test_invalid_interval_is_rejected(label_data, value):
 
 def test_interval_is_optional_and_accepts_seconds(label_data):
     assert LabelConfig(label_data).upload_interval_seconds == 0
+    assert LabelConfig(label_data).upload_interval_jitter_seconds == 0
     label_data["upload_interval_seconds"] = 1200
     assert LabelConfig(label_data).upload_interval_seconds == 1200
+
+
+@pytest.mark.parametrize("value", [-1, float("nan"), float("inf"), True, "1800", 7201])
+def test_invalid_jitter_is_rejected(label_data, value):
+    label_data["upload_interval_seconds"] = 7200
+    label_data["upload_interval_jitter_seconds"] = value
+    with pytest.raises(ValueError, match="upload_interval_jitter_seconds"):
+        LabelConfig(label_data)
+
+
+def test_jitter_accepts_bounded_window(label_data):
+    label_data["upload_interval_seconds"] = 7200
+    label_data["upload_interval_jitter_seconds"] = 1800
+    label = LabelConfig(label_data)
+    assert label.upload_interval_jitter_seconds == 1800
+
+
+def test_bounded_gaussian_gap_is_centered_and_stable():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    gaps = [_target_interval_seconds(start + timedelta(seconds=index), 7200, 1800)
+            for index in range(500)]
+    assert all(5400 <= gap <= 9000 for gap in gaps)
+    assert 7000 < sum(gaps) / len(gaps) < 7400
+    assert min(gaps) < 6900
+    assert max(gaps) > 7500
+    assert _target_interval_seconds(start, 7200, 1800) == gaps[0]
+
+
+def test_gaussian_gap_survives_restart_and_interrupted_wait(tmp_path, clock):
+    path = tmp_path / "history.db"
+    history = HistoryDB(path)
+    history.record_upload("first", "htdemucs", "first-id", "public")
+    with patch("yt_song_to_instrumental.upload_pacing.time.sleep", side_effect=KeyboardInterrupt) as sleep:
+        with pytest.raises(KeyboardInterrupt):
+            wait_for_upload_slot(history, 7200, 1800)
+    first_remaining = sleep.call_args.args[0]
+    assert 5400 <= first_remaining <= 9000
+    history.close()
+
+    clock["now"] += timedelta(seconds=500)
+    recovered = HistoryDB(path)
+    wait_for_upload_slot(recovered, 7200, 1800)
+    assert clock["sleeps"] == [first_remaining - 500]
+    assert len(recovered.get_all_uploads()) == 1
+    recovered.close()
 
 
 def test_shared_interval_survives_reopening_history_and_model_changes(tmp_path, clock):

@@ -61,9 +61,12 @@ templates:
 upload_short: false
 upload_short_if_music_video: false
 
-# Minimum seconds after each completed upload before starting the next.
-# Shared by instrumentals and Shorts; survives restarts. Set 0 to disable.
+# Center of the gap after each completed upload, shared by instrumentals and Shorts.
+# With 1800 seconds of bounded Gaussian jitter (10-minute standard deviation),
+# gaps stay between 90 and 150 minutes.
+# The chosen gap survives restarts. Set both values to 0 to disable pacing.
 upload_interval_seconds: 7200
+upload_interval_jitter_seconds: 1800
 
 # When true: create a playlist for every contributor — both co-billed primaries
 # ("A & B", "A, B") and featured guests ("(feat. X)" in titles). When false: use

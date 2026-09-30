@@ -129,12 +129,15 @@ uv run yt-instrumental
 
 This scans every channel and playlist under `sources:` in `label.yml`, downloads new tracks, extracts instrumentals, and uploads them. Every download, separation, and upload is recorded in a local SQLite database (`data/history.db`), so re-running only picks up what's new — nothing is processed or uploaded twice.
 
-Set `upload_interval_seconds: 7200` in `label.yml` to leave at least 2 hours
-after each completed upload before starting the next. Instrumentals, Shorts,
-and priority requests share this interval. The worker checks durable upload
-history, so restarts preserve the remaining wait and downtime creates no burst
+Set `upload_interval_seconds: 7200` and `upload_interval_jitter_seconds: 1800`
+in `label.yml` for a Gaussian gap centered on 2 hours, with a 10-minute
+standard deviation and hard bounds of 90 and 150 minutes. Instrumentals,
+Shorts, and priority requests share the gap.
+The worker derives each gap from durable upload history, so restarts preserve
+the remaining wait and downtime creates no burst
 of missed uploads. Separation and rendering can finish while the next upload
-waits. An omitted value or `0` disables pacing; use one worker per history DB.
+waits. An omitted interval or `0` with zero jitter disables pacing; omitted
+jitter defaults to zero. Use one worker per history DB.
 
 ### Scheduled runs
 

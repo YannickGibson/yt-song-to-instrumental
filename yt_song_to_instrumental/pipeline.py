@@ -640,7 +640,10 @@ def _upload_short_track(
     )
 
     try:
-        wait_for_upload_slot(ctx.history, ctx.label_config.upload_interval_seconds)
+        wait_for_upload_slot(
+            ctx.history, ctx.label_config.upload_interval_seconds,
+            ctx.label_config.upload_interval_jitter_seconds,
+        )
         short_yt_id = upload_video(
             ctx.service,
             short_video_path,
@@ -816,7 +819,10 @@ def _upload_track(
     )
 
     try:
-        wait_for_upload_slot(ctx.history, ctx.label_config.upload_interval_seconds)
+        wait_for_upload_slot(
+            ctx.history, ctx.label_config.upload_interval_seconds,
+            ctx.label_config.upload_interval_jitter_seconds,
+        )
         yt_video_id = upload_video(
             ctx.service, video_path, title, description, ctx.privacy,
             max_total_wait_seconds=ctx.upload_max_wait_seconds,

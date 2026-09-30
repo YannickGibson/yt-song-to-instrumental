@@ -371,8 +371,15 @@ SHORT_REJECT_TITLE_PATTERN = (
 
 # One shared upload cadence for instrumentals and Shorts, across model changes.
 DEFAULT_UPLOAD_INTERVAL_SECONDS = 0.0
+DEFAULT_UPLOAD_INTERVAL_JITTER_SECONDS = 0.0
 UPLOAD_INTERVAL_CONFIG_KEY = "upload_interval_seconds"
 UPLOAD_INTERVAL_CONFIG_ERROR = "upload_interval_seconds must be a finite, nonnegative number"
+UPLOAD_INTERVAL_JITTER_CONFIG_KEY = "upload_interval_jitter_seconds"
+UPLOAD_INTERVAL_JITTER_CONFIG_ERROR = (
+    "upload_interval_jitter_seconds must be finite, nonnegative, and no greater than upload_interval_seconds"
+)
+UPLOAD_INTERVAL_JITTER_SIGMA_BOUND = 3.0
+UPLOAD_INTERVAL_JITTER_ROUND_DIGITS = 0
 UPLOAD_PACING_WAIT_LOG = "Upload pacing: waiting %.1f seconds before the next upload"
 HISTORY_UPLOAD_TIMESTAMP_COLUMN = "uploaded_at"
 HISTORY_LATEST_UPLOAD_QUERY = """
