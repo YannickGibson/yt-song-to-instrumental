@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw
 import numpy as np
 
 from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title, _frame_correlation
+from yt_song_to_instrumental.youtube_quota import QuotaReserved
 
 
 def _create_synthetic_video(output_path: Path, is_static: bool, duration: float = 4.0, fps: int = 10):
@@ -131,3 +132,10 @@ def test_raw_source_title_fails_closed():
     service = MagicMock()
     service.videos.return_value.list.return_value.execute.side_effect = RuntimeError()
     assert get_source_video_title(service, "source") is None
+
+
+def test_source_title_budget_exhaustion_explains_short_deferral(caplog):
+    service = MagicMock()
+    service.videos.return_value.list.return_value.execute.side_effect = QuotaReserved("spent")
+    assert get_source_video_title(service, "source") is None
+    assert "API budget resets" in caplog.text

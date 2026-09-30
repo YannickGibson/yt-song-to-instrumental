@@ -108,7 +108,14 @@ HISTORY_EXISTING_UPLOAD_QUERY = (
     "ORDER BY uploaded_at, id LIMIT 1"
 )
 TRACK_STATUS_ALREADY_UPLOADED = "already_uploaded"
-SHORT_SKIPPED_STATUSES = ("skipped_not_music_video", "skipped_disabled")
+SHORT_SKIPPED_STATUSES = (
+    "skipped_not_music_video",
+    "skipped_disabled",
+    "withdrawn_non_music_video",
+    "withdrawn_source_mismatch",
+    "deleted_owner_safety",
+    "private_rejected_source",
+)
 
 # YouTube upload
 YOUTUBE_CATEGORY_MUSIC = "10"
@@ -270,6 +277,7 @@ SINGLE_GROUP_PREFIX = "single:"
 # Conservative Short source validation and title formatting.
 SHORT_SOURCE_TITLE_PART = "snippet"
 SHORT_SOURCE_METADATA_UNAVAILABLE = "source_metadata_unavailable"
+SHORT_SOURCE_TITLE_QUOTA_LOG = "Source title unavailable until API budget resets; deferring Short"
 SHORT_ARTIST_SUFFIX_TEMPLATE = " [{artist}]"
 SHORT_ARTIST_MAX_LENGTH = 60
 VIDEO_MATCH_TOKEN_PATTERN = r"[^\W_]+"
@@ -314,6 +322,8 @@ YOUTUBE_QUOTA_TIMEZONE = "America/Los_Angeles"
 YOUTUBE_QUOTA_NORMAL = 5500
 YOUTUBE_QUOTA_REPAIR = 4000
 YOUTUBE_QUOTA_GENERAL = YOUTUBE_QUOTA_NORMAL + YOUTUBE_QUOTA_REPAIR
+YOUTUBE_QUOTA_NORMAL_LANE = "normal"
+YOUTUBE_QUOTA_REPAIR_LANE = "repair"
 YOUTUBE_QUOTA_MEMBERSHIP_LANE = "membership"
 YOUTUBE_QUOTA_DEDICATED = 90
 YOUTUBE_API_READ_COST = 1

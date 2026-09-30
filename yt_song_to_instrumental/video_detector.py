@@ -25,7 +25,9 @@ from yt_song_to_instrumental.constants import (
     SHORT_STRUCTURE_FRAME_TOLERANCE, SHORT_MOTION_PEAK_MULTIPLIER,
     SHORT_DEFAULT_SAMPLE_FPS, SHORT_REJECT_TITLE_PATTERN,
     SHORT_MUSIC_VIDEO_TITLE_PATTERN,
+    SHORT_SOURCE_TITLE_QUOTA_LOG,
 )
+from yt_song_to_instrumental.youtube_quota import QuotaReserved
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,8 @@ def get_source_video_title(service, video_id: str) -> str | None:
                 title = item["snippet"]["title"]
                 if isinstance(title, str) and title.strip():
                     return title
+    except QuotaReserved:
+        logger.warning(SHORT_SOURCE_TITLE_QUOTA_LOG)
     except Exception:
         logger.warning("Source title unavailable; refusing unverified Short source")
     return None

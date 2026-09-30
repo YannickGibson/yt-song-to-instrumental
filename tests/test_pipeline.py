@@ -638,7 +638,11 @@ class TestSortTracksForPlaylistInsertion:
 
 
 class TestSelectTracks:
-    @pytest.mark.parametrize("short_status", ["uploaded", "skipped_not_music_video", "skipped_disabled"])
+    @pytest.mark.parametrize("short_status", [
+        "uploaded", "skipped_not_music_video", "skipped_disabled",
+        "withdrawn_non_music_video", "withdrawn_source_mismatch",
+        "deleted_owner_safety", "private_rejected_source",
+    ])
     def test_model_switch_preserves_completed_or_skipped_historical_shorts(self, short_status):
         db = HistoryDB(":memory:")
         db.record_download("PastTrack01", "url", "Past Track", "Example Artist", "", "Channel", "channel-url", "old.wav", "old.jpg")
@@ -656,7 +660,7 @@ class TestSelectTracks:
 
         assert [track.video_id for track in selected] == ["PastTrack01"]
 
-    def test_newer_short_backfill_precedes_old_long_form_upload(self):
+    def test_long_form_upload_precedes_short_backfill(self):
         db = HistoryDB(":memory:")
         db.record_download(
             "OldUpload01", "url", "Old Upload", "Example Artist", "", "Channel",
@@ -675,7 +679,7 @@ class TestSelectTracks:
             shorts_enabled=True,
         )
 
-        assert [track.video_id for track in selected] == ["NewShort01", "OldUpload01"]
+        assert [track.video_id for track in selected] == ["OldUpload01", "NewShort01"]
 
 
 @pytest.fixture(autouse=True)

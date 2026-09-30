@@ -97,6 +97,26 @@ def test_membership_borrows_unused_repair_budget_but_keeps_shared_limit(tmp_path
     ledger.charge("youtube.videos.insert")
 
 
+def test_membership_retries_leave_normal_budget_for_source_checks(tmp_path):
+    ledger = QuotaLedger(tmp_path / "quota.db")
+    with ledger.membership_lane():
+        ledger.charge("youtube.playlistItems.insert", attempts=80)
+        with pytest.raises(QuotaReserved):
+            ledger.charge("youtube.playlistItems.list")
+    ledger.charge("youtube.videos.list")
+
+
+def test_repair_and_membership_share_non_normal_budget(tmp_path):
+    ledger = QuotaLedger(tmp_path / "quota.db")
+    with ledger.repair_lane():
+        ledger.charge("youtube.playlistItems.update", attempts=40)
+    with ledger.membership_lane():
+        ledger.charge("youtube.playlistItems.insert", attempts=40)
+        with pytest.raises(QuotaReserved):
+            ledger.charge("youtube.playlistItems.list")
+    ledger.charge("youtube.videos.list")
+
+
 def test_assignment_budget_exhaustion_preserves_remaining_work(tmp_path):
     db = HistoryDB(tmp_path / "history.db")
     for index in range(3):

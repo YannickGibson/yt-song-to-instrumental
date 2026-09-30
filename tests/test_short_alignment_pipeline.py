@@ -182,6 +182,23 @@ def test_channel_failure_keeps_short_retryable_without_reuploading_instrumental(
     upload.assert_called_once()
 
 
+def test_missing_source_title_skips_separation_and_remains_retryable(short_case):
+    ctx, track, _, render, upload, _, _ = short_case
+    instrumental = Path(ctx.history.get_separation_record(track.video_id, ctx.model).instrumental_path)
+    instrumental.unlink()
+    with (
+        patch("yt_song_to_instrumental.pipeline.get_source_video_title", return_value=None),
+        patch("yt_song_to_instrumental.pipeline.download_track_audio") as download_audio,
+    ):
+        _run(ctx, track)
+    download_audio.assert_not_called()
+    ctx.separator.separate.assert_not_called()
+    render.assert_not_called()
+    upload.assert_not_called()
+    assert ctx.history.get_short_status(track.video_id, ctx.model) == SHORT_SOURCE_METADATA_UNAVAILABLE
+    assert ctx.history.get_existing_upload(track.video_id).youtube_upload_id == "existing-full"
+
+
 def test_configured_video_channel_takes_precedence_over_release_channel(short_case):
     ctx, track, _, _, _, detect, _ = short_case
     ctx.video_channel_url = "approved-channel"

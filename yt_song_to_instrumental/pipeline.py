@@ -283,12 +283,11 @@ def _select_tracks(
         else:
             playlist_upload_tracks.append(dl)
 
-    # Short backfills do not alter long-form playlists, so they can safely run
-    # newest-first and ahead of an old upload backlog. Long-form work also runs
-    # newest-first while preserving 1..N tracklist order within albums.
+    # Publish full videos before revisiting Shorts for previously uploaded
+    # tracks. A large Short backlog must not delay a new full upload.
     return (
-        sort_tracks_newest_first_preserve_albums(short_backfill_tracks)
-        + sort_tracks_newest_first_preserve_albums(playlist_upload_tracks)
+        sort_tracks_newest_first_preserve_albums(playlist_upload_tracks)
+        + sort_tracks_newest_first_preserve_albums(short_backfill_tracks)
     )
 
 
@@ -391,6 +390,11 @@ def _upload_short_track(
     if sep_record is not None and not sep_record.quality_passed:
         return
 
+    source_title = get_source_video_title(ctx.service, track.video_id)
+    if source_title is None:
+        ctx.history.record_short_status(track.video_id, ctx.model, SHORT_SOURCE_METADATA_UNAVAILABLE)
+        return
+
     instrumental_path = (
         Path(sep_record.instrumental_path)
         if sep_record
@@ -436,10 +440,6 @@ def _upload_short_track(
             return
 
     logger.info("Processing YouTube Short for: %s", track.title)
-    source_title = get_source_video_title(ctx.service, track.video_id)
-    if source_title is None:
-        ctx.history.record_short_status(track.video_id, ctx.model, SHORT_SOURCE_METADATA_UNAVAILABLE)
-        return
     source_video = download_source_video(track.video_id, ctx.tmp_dir)
     if not source_video or not source_video.exists():
         logger.warning("Source video could not be downloaded for Short: %s", track.title)
@@ -739,7 +739,7 @@ def _upload_track(
             if not ctx.history.is_short_uploaded(track.video_id, ctx.model) and (
                 ctx.force_short
                 or ctx.history.get_short_status(track.video_id, ctx.model)
-                not in ("skipped_not_music_video", "skipped_disabled")
+                not in SHORT_SKIPPED_STATUSES
             ):
                 start_time = 0.0
                 if sep_record and sep_record.trim_start_seconds > 0.0:
