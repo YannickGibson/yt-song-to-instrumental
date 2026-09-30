@@ -63,7 +63,7 @@ upload_short_if_music_video: false
 
 # Minimum seconds after each completed upload before starting the next.
 # Shared by instrumentals and Shorts; survives restarts. Set 0 to disable.
-upload_interval_seconds: 1200
+upload_interval_seconds: 7200
 
 # When true: create a playlist for every contributor — both co-billed primaries
 # ("A & B", "A, B") and featured guests ("(feat. X)" in titles). When false: use
