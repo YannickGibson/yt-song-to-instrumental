@@ -108,6 +108,15 @@ HISTORY_EXISTING_UPLOAD_QUERY = (
     "ORDER BY uploaded_at, id LIMIT 1"
 )
 TRACK_STATUS_ALREADY_UPLOADED = "already_uploaded"
+SHORT_RETRYABLE_FAILURE = "short_failed"
+PRIORITY_RETRYABLE_FAILURE = "priority_failed"
+UPLOAD_KIND_SHORT = "short"
+UPLOAD_KIND_INSTRUMENTAL = "instrumental"
+RETRYABLE_PIPELINE_FAILURE_STATUSES = (
+    SHORT_RETRYABLE_FAILURE, PRIORITY_RETRYABLE_FAILURE,
+    "separation_failed", "render_failed", "upload_failed", "no_thumbnail",
+)
+RETRYABLE_PIPELINE_FAILURE_ERROR = "retryable track stages remain incomplete"
 SHORT_SKIPPED_STATUSES = (
     "skipped_not_music_video",
     "skipped_disabled",
@@ -391,3 +400,198 @@ SELECT uploaded_at FROM (
 )
 ORDER BY julianday(uploaded_at) DESC LIMIT 1
 """
+
+# Managed runtime defaults; private deployment paths are supplied in JSON.
+RUNTIME_DEFAULTS = {
+    "timezone": "UTC", "daily_time": [6, 5], "backup_time": [2, 55],
+    "backup_retention": 7, "retry_seconds": 300, "retry_max_seconds": 3600,
+    "rescan_seconds": 900, "poll_seconds": 60, "heartbeat_seconds": 2,
+    "shutdown_seconds": 15, "max_log_bytes": 20971520,
+}
+
+PRIORITY_RETRYABLE_ERROR_PREFIX = "retryable: "
+
+# Runtime protocol, service and upload journal constants.
+RUNTIME_NUMBER_0 = 0
+RUNTIME_MAIN = '__main__'
+RUNTIME_PRIVATE_FILE_MODE = 384
+RUNTIME_LOCK_OPEN_MODE = 'a+'
+RUNTIME_BACKUPS = 'backups'
+RUNTIME_BACKUP_DATE = 'backup_date'
+RUNTIME_BACKUP_RETRY_AFTER = 'backup_retry_after'
+RUNTIME_BACKUPS_COMPLETE = 'backups_complete'
+RUNTIME_CONFIG = '--config'
+RUNTIME_UMASK_VALUE = 63
+RUNTIME_STATE_JSON = 'state.json'
+RUNTIME_SUPERVISOR_STARTED = 'supervisor_started'
+RUNTIME_PROJECT = 'project'
+RUNTIME_ENVIRONMENT_ERROR = 'Worker environment must be separate from development .venv'
+RUNTIME_TMP = '.tmp'
+RUNTIME_TEXT_WRITE_MODE = 'w'
+RUNTIME_NEWLINE = '\n'
+RUNTIME_DATABASE_MISSING_ERROR = 'Production history database is missing'
+RUNTIME_PRIVATE_DIRECTORY_MODE = 448
+RUNTIME_BACKUP_DATABASES = 'backup_databases'
+RUNTIME_PARTIAL = '.partial'
+RUNTIME_CONSECUTIVE_FAILURES = 'consecutive_failures'
+RUNTIME_RETRY_MAX_SECONDS = 'retry_max_seconds'
+RUNTIME_TIMEZONE = 'timezone'
+RUNTIME_RUNTIME_DIR = 'runtime_dir'
+RUNTIME_SUPERVISOR_LOCK = 'supervisor.lock'
+RUNTIME_SUPERVISOR_ALREADY_RUNNING = 'supervisor_already_running'
+RUNTIME_SUPERVISOR_PID = 'supervisor_pid'
+RUNTIME_JOB_RUNNING = 'job_running'
+RUNTIME_WORKER_PID = 'worker_pid'
+RUNTIME_RECOVERY_REQUIRED = 'recovery_required'
+RUNTIME_PAUSE_FILE = 'pause_file'
+RUNTIME_WORKER_LOCK = 'worker_lock'
+RUNTIME_DATABASE = 'database'
+RUNTIME_HEARTBEAT = 'heartbeat'
+RUNTIME_PAUSED = 'paused'
+RUNTIME_RESET_RETRIES = 'reset-retries'
+RUNTIME_SUPERVISOR_STOPPED = 'supervisor_stopped'
+RUNTIME_COMMAND = 'command'
+RUNTIME_NUMBER_2 = 2
+RUNTIME_NUMBER_1 = 1
+RUNTIME_MODE_RO = '?mode=ro'
+RUNTIME_NUMBER_15 = 15
+RUNTIME_TIME = 'time'
+RUNTIME_EVENT = 'event'
+RUNTIME_BACKUP_TIME = 'backup_time'
+RUNTIME_RETRY_SECONDS = 'retry_seconds'
+RUNTIME_ATTEMPT_DAY = 'attempt_day'
+RUNTIME_PENDING_REQUEST_COUNT = 'pending_request_count'
+RUNTIME_POLL_SECONDS = 'poll_seconds'
+RUNTIME_VENV = '.venv'
+RUNTIME_PENDING_REQUESTS_QUERY = "SELECT id,status,requested_at FROM priority_requests WHERE status IN ('pending','processing') ORDER BY id"
+RUNTIME_OK = 'ok'
+RUNTIME_BACKUP_RETENTION = 'backup_retention'
+RUNTIME_NUMBER_10 = 10
+RUNTIME_RETRY_AFTER = 'retry_after'
+RUNTIME_NUMBER_300 = 300
+RUNTIME_BACKUP_FAILED = 'backup_failed'
+RUNTIME_LAST_SUPERVISOR_ERROR = 'last_supervisor_error'
+RUNTIME_SUPERVISOR_ITERATION_FAILED = 'supervisor_iteration_failed'
+RUNTIME_BACKUP_INTEGRITY_CHECK_FAILED = 'Backup integrity check failed'
+RUNTIME_DAILY_TIME = 'daily_time'
+RUNTIME_RUN_NOW = 'run-now'
+RUNTIME_YT_COMMENT_GATE = 'YT_COMMENT_GATE'
+RUNTIME_YT_UPLOADER_REPO = 'YT_UPLOADER_REPO'
+RUNTIME_PIPELINE_FINISHED = 'pipeline_finished'
+RUNTIME_DAILY_SUCCESS_DATE = 'daily_success_date'
+RUNTIME_WORKER_LOG = 'worker_log'
+RUNTIME_JOB_STARTED = 'job_started'
+RUNTIME_JOB_DUE_DATE = 'job_due_date'
+RUNTIME_ENVIRONMENT = 'environment'
+RUNTIME_LOG_OPEN_MODE = 'a'
+RUNTIME_PIPELINE_STARTED = 'pipeline_started'
+RUNTIME_JOB_FINISHED = 'job_finished'
+RUNTIME_LAST_RETURNCODE = 'last_returncode'
+RUNTIME_NEXT_RUN_AFTER = 'next_run_after'
+RUNTIME_MAX_LOG_BYTES = 'max_log_bytes'
+RUNTIME_WORKER_PREVIOUS_LOG = 'worker.previous.log'
+RUNTIME_PRAGMA_QUICK_CHECK = 'PRAGMA quick_check'
+RUNTIME_HEARTBEAT_SECONDS = 'heartbeat_seconds'
+RUNTIME_RESCAN_SECONDS = 'rescan_seconds'
+RUNTIME_SHUTDOWN_SECONDS = 'shutdown_seconds'
+RUNTIME_LABEL = 'label'
+RUNTIME_SYSTEM = 'system'
+RUNTIME_PLIST_LABEL = 'Label'
+RUNTIME_PROGRAMARGUMENTS = 'ProgramArguments'
+RUNTIME_WORKINGDIRECTORY = 'WorkingDirectory'
+RUNTIME_RUNATLOAD = 'RunAtLoad'
+RUNTIME_KEEPALIVE = 'KeepAlive'
+RUNTIME_THROTTLEINTERVAL = 'ThrottleInterval'
+RUNTIME_EXITTIMEOUT = 'ExitTimeOut'
+RUNTIME_UMASK = 'Umask'
+RUNTIME_ENVIRONMENTVARIABLES = 'EnvironmentVariables'
+RUNTIME_STANDARDOUTPATH = 'StandardOutPath'
+RUNTIME_STANDARDERRORPATH = 'StandardErrorPath'
+RUNTIME_STOP = 'stop'
+RUNTIME_USERNAME = 'username'
+RUNTIME_ACCOUNT_ERROR = 'Service requires a valid label and an ordinary user account'
+RUNTIME_LIBRARY_LAUNCHDAEMONS = '/Library/LaunchDaemons'
+RUNTIME_LIBRARY_LAUNCHAGENTS = 'Library/LaunchAgents'
+RUNTIME_M = '-m'
+RUNTIME_YT_SONG_TO_INSTRUMENTAL_RUNTIME = 'yt_song_to_instrumental.runtime'
+RUNTIME_NUMBER_5 = 5
+RUNTIME_PLIST_USERNAME = 'UserName'
+RUNTIME_BIN_LAUNCHCTL = '/bin/launchctl'
+RUNTIME_ADMIN_ERROR = 'System installation requires sudo; the worker runs as the configured user'
+RUNTIME_ACTIVE_WORKER_ERROR = 'Worker is active. Admission is now paused; install again after the current run finishes'
+RUNTIME_PLIST_TMP = '.plist.tmp'
+RUNTIME_BOOTSTRAP = 'bootstrap'
+RUNTIME_BOOTOUT = 'bootout'
+RUNTIME_LABEL_PATTERN = '[A-Za-z0-9.-]+'
+RUNTIME_SUPERVISOR_LOG = 'supervisor.log'
+RUNTIME_SUPERVISOR_ERROR_LOG = 'supervisor-error.log'
+RUNTIME_BINARY_WRITE_MODE = 'wb'
+RUNTIME_DAEMON_FILE_MODE = 420
+RUNTIME_HANDOFF_TIMEOUT_ERROR = 'Previous supervisor has not released its lock; admission remains paused'
+RUNTIME_PRINT = 'print'
+RUNTIME_PLIST_DISABLED = '.plist.disabled'
+RUNTIME_INSTALL = 'install'
+RUNTIME_RUN_REQUESTED = 'run_requested'
+RUNTIME_SUPERVISOR = 'supervisor'
+RUNTIME_WORKER = 'worker'
+RUNTIME_ACTION = 'action'
+RUNTIME_SYSTEM_2 = '--system'
+RUNTIME_STORE_TRUE = 'store_true'
+RUNTIME_SYSTEM_HELP = 'Manage a boot-time daemon running as the configured ordinary user'
+RUNTIME_START = 'start'
+RUNTIME_PAUSE = 'pause'
+RUNTIME_STATUS = 'status'
+RUNTIME_RESUME = 'resume'
+UPLOAD_RECOVERY_UPLOAD_JOURNAL = 'upload_journal'
+UPLOAD_RECOVERY_GET = 'GET'
+UPLOAD_RECOVERY_UPLOADS = 'uploads'
+UPLOAD_RECOVERY_SNIPPET = 'snippet'
+UPLOAD_RECOVERY_NUMBER_1 = 1
+UPLOAD_RECOVERY_EXPIRED = 'expired'
+UPLOAD_RECOVERY_VISIBILITY_GRACE_SECONDS = 900
+UPLOAD_RECOVERY_RESULT = 'result'
+UPLOAD_RECOVERY_SESSION = 'session'
+UPLOAD_RECOVERY_ID = 'id'
+UPLOAD_RECOVERY_SCHEMA = 'CREATE TABLE IF NOT EXISTS upload_sessions (video_id TEXT, model TEXT, kind TEXT, payload TEXT NOT NULL, PRIMARY KEY(video_id, model, kind))'
+UPLOAD_RECOVERY_SAVE_QUERY = 'INSERT OR REPLACE INTO upload_sessions VALUES (?, ?, ?, ?)'
+UPLOAD_RECOVERY_RELATEDPLAYLISTS = 'relatedPlaylists'
+UPLOAD_RECOVERY_BODY = 'body'
+UPLOAD_RECOVERY_NEXTPAGETOKEN = 'nextPageToken'
+UPLOAD_RECOVERY_AMBIGUOUS_ERROR = 'Ambiguous completed uploads require review; no new upload was started'
+UPLOAD_RECOVERY_PENDING_ERROR = 'Expired upload session is awaiting external reconciliation'
+UPLOAD_RECOVERY_RB = 'rb'
+UPLOAD_RECOVERY_LOCATION = 'location'
+UPLOAD_RECOVERY_PUT = 'PUT'
+UPLOAD_RECOVERY_CONTENTDETAILS = 'contentDetails'
+UPLOAD_RECOVERY_VIDEOID = 'videoId'
+UPLOAD_RECOVERY_ITEMS = 'items'
+UPLOAD_RECOVERY_HTTP_MISSING = 404
+UPLOAD_RECOVERY_HTTP_GONE = 410
+UPLOAD_RECOVERY_NUMBER_0 = 0
+UPLOAD_RECOVERY_LOAD_QUERY = 'SELECT payload FROM upload_sessions WHERE video_id=? AND model=? AND kind=?'
+UPLOAD_RECOVERY_HTTP_OK = 200
+UPLOAD_RECOVERY_HTTP_CREATED = 201
+UPLOAD_RECOVERY_HTTP_INCOMPLETE = 308
+UPLOAD_RECOVERY_SHA256 = 'sha256'
+UPLOAD_RECOVERY_CONTENT_RANGE = 'Content-Range'
+UPLOAD_RECOVERY_CONTENT_LENGTH = 'content-length'
+UPLOAD_RECOVERY_STATUS_RANGE = 'bytes */*'
+UPLOAD_RECOVERY_EMPTY_CONTENT_LENGTH = '0'
+UPLOAD_RECOVERY_DIGEST = 'digest'
+UPLOAD_RECOVERY_PAGE_SIZE = 50
+UPLOAD_RECOVERY_TITLE = 'title'
+UPLOAD_RECOVERY_DESCRIPTION = 'description'
+UPLOAD_RECOVERY_CLOCK_SKEW_SECONDS = 300
+UPLOAD_RECOVERY_Z = 'Z'
+UPLOAD_RECOVERY_UTC_OFFSET = '+00:00'
+UPLOAD_RECOVERY_STARTED = 'started'
+UPLOAD_RECOVERY_ID_SEPARATOR = ','
+UPLOAD_RECOVERY_PUBLISHEDAT = 'publishedAt'
+
+PRIORITY_REQUEUE_FAILED_QUERY = "UPDATE priority_requests SET status=?, started_at=NULL, finished_at=NULL WHERE status=? AND error LIKE ?"
+PRIORITY_RETRYABLE_ERROR_PATTERN = PRIORITY_RETRYABLE_ERROR_PREFIX + "%"
+UPLOAD_COMPLETED_LOG = "Upload complete: %s (ID: %s)"
+STAGE_BINARY_READ_MODE = "rb"
+MISSING_STAGE_OUTPUT_LOG = "Completed separation output is missing; regenerating source %s"
+
+RUNTIME_DB_PATH = "DB_PATH"

@@ -11,6 +11,9 @@ from yt_song_to_instrumental.constants import (
     HISTORY_LATEST_UPLOAD_QUERY,
     HISTORY_UPLOAD_TIMESTAMP_COLUMN,
     PRIORITY_STATUS_COMPLETED,
+    PRIORITY_RETRYABLE_ERROR_PREFIX,
+    PRIORITY_REQUEUE_FAILED_QUERY,
+    PRIORITY_RETRYABLE_ERROR_PATTERN,
     PRIORITY_STATUS_FAILED,
     PRIORITY_STATUS_PENDING,
     PRIORITY_STATUS_PROCESSING,
@@ -617,6 +620,14 @@ class HistoryDB:
         self._conn.commit()
         return cursor.rowcount
 
+    def requeue_failed_priority_requests(self) -> int:
+        cursor = self._conn.execute(
+            PRIORITY_REQUEUE_FAILED_QUERY,
+            (PRIORITY_STATUS_PENDING, PRIORITY_STATUS_FAILED, PRIORITY_RETRYABLE_ERROR_PATTERN),
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
     def complete_priority_request(self, request_id: int) -> None:
         self._conn.execute(
             """UPDATE priority_requests
@@ -626,7 +637,9 @@ class HistoryDB:
         )
         self._conn.commit()
 
-    def fail_priority_request(self, request_id: int, error: str) -> None:
+    def fail_priority_request(self, request_id: int, error: str, *, retryable: bool = False) -> None:
+        if retryable:
+            error = PRIORITY_RETRYABLE_ERROR_PREFIX + error
         self._conn.execute(
             """UPDATE priority_requests
             SET status = ?, finished_at = ?, error = ?

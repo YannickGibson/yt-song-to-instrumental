@@ -23,6 +23,8 @@ from yt_song_to_instrumental.constants import (
     PLAYLIST_RETRY_HELP,
     PLAYLIST_RETRY_REPORT,
     PLAYLIST_RECOVERY_BATCH_SIZE,
+    RETRYABLE_PIPELINE_FAILURE_ERROR,
+    RETRYABLE_PIPELINE_FAILURE_STATUSES,
 )
 from yt_song_to_instrumental.history import HistoryDB
 from yt_song_to_instrumental.pipeline import PipelineReport, process_url
@@ -377,6 +379,7 @@ def main() -> None:
         )
 
     history = HistoryDB(app_config.db_path)
+    retryable_failure = False
 
     try:
         if args.dry_run:
@@ -394,6 +397,7 @@ def main() -> None:
                 _print_preview_report(report)
             return
 
+        history.requeue_failed_priority_requests()
         recovered_priority_requests = history.requeue_processing_priority_requests()
         if recovered_priority_requests:
             logger.warning(
@@ -415,6 +419,7 @@ def main() -> None:
             shared_separator = get_separator(effective_model)
 
             def _drain_priority_requests() -> None:
+                nonlocal retryable_failure
                 priority_results = process_priority_requests(
                     config=app_config,
                     label_config=label_config,
@@ -429,6 +434,11 @@ def main() -> None:
                 )
                 for _, priority_report in priority_results:
                     _print_pipeline_report(priority_report)
+                    if any(
+                        track.status in RETRYABLE_PIPELINE_FAILURE_STATUSES
+                        for track in priority_report.tracks
+                    ):
+                        retryable_failure = True
 
             drain_priority_requests = _drain_priority_requests
             drain_priority_requests()
@@ -459,10 +469,14 @@ def main() -> None:
                 before_track=drain_priority_requests,
             )
             _print_pipeline_report(report)
+            if any(track.status in RETRYABLE_PIPELINE_FAILURE_STATUSES for track in report.tracks):
+                retryable_failure = True
             if drain_priority_requests is not None:
                 drain_priority_requests()
     finally:
         history.close()
+    if retryable_failure:
+        _fail(RETRYABLE_PIPELINE_FAILURE_ERROR)
 
 
 if __name__ == "__main__":

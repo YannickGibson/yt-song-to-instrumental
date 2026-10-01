@@ -5,6 +5,7 @@ import pytest
 
 from yt_song_to_instrumental.cli import _print_pipeline_report, main
 from yt_song_to_instrumental.config import LabelConfig, Source
+from yt_song_to_instrumental.constants import RETRYABLE_PIPELINE_FAILURE_STATUSES
 from yt_song_to_instrumental.history import PriorityRequest
 from yt_song_to_instrumental.pipeline import PipelineReport, TrackReport
 from yt_song_to_instrumental.preview import PreviewReport
@@ -330,6 +331,56 @@ class TestModelPrecedence:
             mock_process.return_value = PipelineReport()
             main()
         assert mock_process.call_args.kwargs["model_name"] == "htdemucs"
+
+
+class TestPipelineExitStatus:
+    @pytest.mark.parametrize("status", RETRYABLE_PIPELINE_FAILURE_STATUSES)
+    def test_retryable_stage_failure_exits_nonzero_after_other_sources(self, status):
+        cfg = _make_label_config(sources=[
+            Source(url="https://yt.com/a", after_date=None),
+            Source(url="https://yt.com/b", after_date=None),
+        ])
+        failed = PipelineReport(failed=1, tracks=[
+            TrackReport("source-a", "Track", "Example Artist", status),
+        ])
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url", side_effect=[failed, PipelineReport()]) as process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB") as history, \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload"]):
+            with pytest.raises(SystemExit) as error:
+                main()
+        assert error.value.code != 0
+        assert process.call_count == 2
+        history.return_value.close.assert_called_once()
+
+    def test_failed_quality_check_is_terminal_for_this_run(self):
+        cfg = _make_label_config(sources=[Source(url="https://yt.com/a", after_date=None)])
+        qa_failed = PipelineReport(failed=1, tracks=[
+            TrackReport("source-a", "Track", "Example Artist", "qa_failed"),
+        ])
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url", return_value=qa_failed), \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload"]):
+            main()
+
+    def test_retryable_priority_failure_exits_nonzero(self):
+        cfg = _make_label_config(sources=[Source(url="https://yt.com/a", after_date=None)])
+        failed = PipelineReport(failed=1, tracks=[
+            TrackReport("source-a", "Track", "Example Artist", "separation_failed"),
+        ])
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli._youtube_config_or_exit"), \
+             patch("yt_song_to_instrumental.cli.authenticate"), \
+             patch("yt_song_to_instrumental.separator.get_separator"), \
+             patch("yt_song_to_instrumental.cli.process_priority_requests", side_effect=[[(1, failed)], []]), \
+             patch("yt_song_to_instrumental.cli.process_url", return_value=PipelineReport()) as process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental"]):
+            with pytest.raises(SystemExit) as error:
+                main()
+        assert error.value.code != 0
+        process.assert_called_once()
 
 
 class TestTrimPrecedence:

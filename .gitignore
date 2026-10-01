@@ -16,3 +16,12 @@ build/
 CLAUDE.md
 logs/
 *.bak
+
+# Private service deployment and durable runtime artifacts
+runtime.local.json
+.runtime/
+*.db
+*.db-shm
+*.db-wal
+*.log
+backups/

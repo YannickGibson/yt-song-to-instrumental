@@ -33,6 +33,8 @@ Download songs from YouTube, extract instrumentals using AI source separation, a
 The MPS backend requires `audio-separator[cpu]==0.47.0`, `torch==2.14.0`, and
 `demucs==4.1.0` in a separate environment. The legacy CPU extras and lockfile
 have incompatible version constraints and must not synchronize this environment.
+Keep the development `.venv` independent of the MPS worker environment;
+`uv run` synchronizes `.venv` against the CPU lockfile.
 Invoke its installed executable directly. Set
 `AUDIO_SEPARATOR_MODEL_DIR` to a persistent checkpoint cache if desired.
 Published source videos are recognized across model changes, and pending Shorts
@@ -310,3 +312,85 @@ so existing duplicates and membership remain intact.
 The same positioned-insert guard checks known release order and queues additions
 to unrepaired playlists. Repairs reserve quota even when uploads run continuously.
 Keep the quota database private and persistent across restarts.
+
+## Managed macOS worker
+
+The repository owns the supervisor (`yt_song_to_instrumental.runtime`), launchd
+installation, controls, SQLite upload journal, and recovery. The separate
+comments application is not installed or managed here. Its only runtime
+contract is the shared exclusive `flock` at `worker_lock` and the
+`YT_COMMENT_GATE` / `YT_UPLOADER_REPO` environment variables. Retain the existing
+lock path when migrating an installation. Never delete or replace a live lock
+file, and never launch another pipeline beside the managed worker.
+
+1. Provision the independent MPS environment with `scripts/install-mac-worker.sh`.
+   Use `YT_WORKER_ENV` to choose another directory. Stop the service before
+   changing its dependencies. Development tests use the separate `.venv`;
+   `UV_CACHE_DIR=/private/tmp/yt-uv-cache uv run --no-sync pytest` tests an already
+   provisioned development environment without synchronizing either environment.
+2. Copy `runtime.example.json` to ignored `runtime.local.json` or a private
+   directory. Replace the example paths and username, set your timezone, and
+   retain the existing runtime directory, database, worker lock, pause marker,
+   and worker log when migrating. Keep `environment.DB_PATH` identical to
+   `database`. Keep `.env`, `label.yml`, tokens, databases, backups, logs, media,
+   and deployment JSON outside Git. Restrict deployment JSON to mode `600`.
+3. Inspect service status, recent worker output, and SQLite stages before
+   replacing a service. Preserve a private database backup. Installation pauses
+   admission and takes the worker gate before stopping the old service. If a
+   worker is active, installation leaves it running and refuses the handoff;
+   repeat at a pipeline boundary. Existing durable state is retained.
+
+Use the worker interpreter directly; these commands never run `uv sync`:
+
+```sh
+.venv-mac/bin/python -m yt_song_to_instrumental.runtime_control install --config runtime.local.json
+.venv-mac/bin/python -m yt_song_to_instrumental.runtime_control status --config runtime.local.json
+.venv-mac/bin/python -m yt_song_to_instrumental.runtime_control run-now --config runtime.local.json
+.venv-mac/bin/python -m yt_song_to_instrumental.runtime_control pause --config runtime.local.json
+.venv-mac/bin/python -m yt_song_to_instrumental.runtime_control resume --config runtime.local.json
+.venv-mac/bin/python -m yt_song_to_instrumental.runtime_control stop --config runtime.local.json
+.venv-mac/bin/python -m yt_song_to_instrumental.runtime_control start --config runtime.local.json
+```
+
+The installed `yt-instrumental-runtime` command has the same interface. `pause`
+lets the current pipeline finish. `run-now` requests one managed run and resets
+retry backoff, but still respects pause, the worker lock, upload pacing, and
+quota. `stop` unloads launchd and interrupts the worker's process group;
+completed SQLite stages remain intact. Prefer a track boundary when stopping.
+After enqueuing a priority request on macOS, use `run-now`; the active worker
+checks priority requests before each track. No second worker is started.
+
+Installation defaults to a LaunchAgent that starts at login. To run before GUI
+login, invoke `install --system` with administrator privileges, using the same
+private configuration. This replaces the agent with a LaunchDaemon whose
+`UserName` remains the configured ordinary account. Use `--system` for its
+start/stop commands as well. Validate MPS access after logout on the target Mac;
+a LaunchAgent alone cannot promise processing while logged out. Keep private
+runtime files owned and writable by the configured account.
+
+The supervisor checks admission every 60 seconds, retries recoverable failures
+with capped exponential backoff (at most one hour), and rescans after a
+successful run every 15 minutes. It does not stop retrying after three failures.
+Daily scheduling, backup time/retention, polling, retry limits, and rescan delay
+are configurable; defaults live in `constants.py`. SQLite online backups are
+integrity-checked, private, and retained for seven days by default.
+
+Set `upload_interval_seconds: 7200` and
+`upload_interval_jitter_seconds: 1800` in private `label.yml` for the two-hour
+schedule with bounded Gaussian jitter. The next slot derives from the last
+durable upload timestamp, so restarts do not redraw jitter or reset pacing.
+Instrumentals precede their Shorts; requested offsets and completed stage
+records remain authoritative. Separation, render, thumbnail, upload, and
+retryable Short failures produce a nonzero worker exit. Interrupted priority
+requests and newly marked retryable failures are retried on the next worker;
+historical terminal failures are left alone.
+
+The private `upload_sessions` table saves a resumable session before media is
+sent and saves the remote video ID before the upload returns. After a crash,
+the worker queries the existing session before sending more data. Expired
+sessions require a complete authenticated channel reconciliation and a
+15-minute visibility grace period before reinsertion. Ambiguous matches or API
+read failures leave the upload retryable without inserting another video.
+Session URLs are sensitive: keep database copies and backups private. Uploads
+made before this journal existed require inspection of the old logs and channel
+if their completion is uncertain.

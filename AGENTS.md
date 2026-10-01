@@ -60,6 +60,8 @@ When adding a new separation model backend, document its requirements here AND i
 
 The MPS backend requires audio-separator 0.47.0, torch 2.14.0 and demucs 4.1.0
 in a separate environment; the legacy CPU extras/lockfile are incompatible.
+Keep development `.venv` independent of the MPS worker environment because
+`uv run` synchronizes `.venv` against the CPU lockfile.
 `AUDIO_SEPARATOR_MODEL_DIR` can select the persistent
 checkpoint cache. A change of default model must preserve source-level upload
 deduplication and historical model associations for remaining Shorts.
@@ -75,3 +77,11 @@ preserve measurement scope and caveats from README.md.
 ## CI & Test dependencies
 - When running tests in CI (`.github/workflows/ci.yml`) or in fresh environments, install dependencies with `uv sync --extra dev --extra all-models` (or `uv sync --all-extras`).
 - `tests/test_separator.py` imports separator backend modules directly (e.g. `inst_hq_4_backend.py`), which loads `audio_separator` requiring `onnxruntime` at import time. Omitting `onnxruntime` will cause CI test collection to fail with `ModuleNotFoundError: No module named 'onnxruntime'`.
+
+## Managed macOS runtime
+- Runtime, control, installation and upload recovery code belongs in the package.
+- Use the private JSON deployment config with `python -m yt_song_to_instrumental.runtime_control`.
+- On macOS, enqueue priority requests normally, then request `run-now`; do not invoke systemctl or start another pipeline.
+- Preserve the existing runtime directory and shared worker-lock path during migration. Inspect stages before stopping; `install` refuses an active worker and pauses admission.
+- Never synchronize the MPS environment with the development lockfile. Provision it with `scripts/install-mac-worker.sh` only while the worker is stopped.
+- A LaunchAgent requires login; boot-time daemon installation requires administrator privileges and an ordinary configured UserName. Verify MPS after logout before claiming unattended logout support.

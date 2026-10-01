@@ -16,12 +16,14 @@ from yt_song_to_instrumental.constants import (
     PLAYLIST_MANUAL_SORT_REQUIRED,
     RETRYABLE_UPLOAD_REASONS,
     UPLOAD_CHUNK_SIZE_BYTES,
+    UPLOAD_COMPLETED_LOG,
     UPLOAD_RETRY_BACKOFF_SCHEDULE_SECONDS,
     YOUTUBE_CATEGORY_MUSIC,
     YOUTUBE_SCOPE,
     YOUTUBE_UPLOAD_SCOPE,
 )
 
+from yt_song_to_instrumental.upload_recovery import recovered_attempt
 from yt_song_to_instrumental.youtube_quota import QuotaLedger, metered_request_builder, quota_path
 
 logger = logging.getLogger(__name__)
@@ -85,13 +87,17 @@ def _do_single_upload_attempt(service, body: dict, file_path: Path, title: str) 
         resumable=True,
     )
     request = service.videos().insert(part="snippet,status", body=body, media_body=media)
+    recovered = recovered_attempt(service, request, file_path, body)
+    if recovered is not None:
+        logger.info(UPLOAD_COMPLETED_LOG, title, recovered)
+        return recovered
     response = None
     while response is None:
         status, response = request.next_chunk()
         if status:
             logger.info("Upload progress: %d%%", int(status.progress() * 100))
     video_id = response["id"]
-    logger.info("Upload complete: %s (ID: %s)", title, video_id)
+    logger.info(UPLOAD_COMPLETED_LOG, title, video_id)
     return video_id
 
 

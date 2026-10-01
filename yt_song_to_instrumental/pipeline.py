@@ -1,4 +1,5 @@
 import logging
+import os
 import subprocess
 import urllib.parse
 from dataclasses import dataclass, field, replace
@@ -13,6 +14,11 @@ from yt_song_to_instrumental.constants import (
     PLAYLIST_RETRY_BATCH_SIZE,
     PLAYLIST_RECOVERY_BATCH_SIZE,
     SHORT_ALIGNMENT_AUDIO_SUFFIX,
+    SHORT_RETRYABLE_FAILURE,
+    UPLOAD_KIND_SHORT,
+    UPLOAD_KIND_INSTRUMENTAL,
+    STAGE_BINARY_READ_MODE,
+    MISSING_STAGE_OUTPUT_LOG,
     SHORT_ALIGNMENT_ERROR_LOG,
     SHORT_ALIGNMENT_FAILED,
     SHORT_ALIGNMENT_REFERENCE_ERROR,
@@ -39,6 +45,7 @@ from yt_song_to_instrumental.separator.base import SeparatorBackend
 from yt_song_to_instrumental.thumbnail import get_thumbnail_for_track
 from yt_song_to_instrumental.upload_pacing import wait_for_upload_slot
 from yt_song_to_instrumental.uploader import upload_video
+from yt_song_to_instrumental.upload_recovery import upload_journal
 from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title
 from yt_song_to_instrumental.video_finder import (
     VideoChannelUnavailable, find_and_verify_music_video, is_trusted_music_video,
@@ -291,6 +298,18 @@ def _select_tracks(
     )
 
 
+def _sync_stage_output(path):
+    if not path.is_file():
+        return
+    with path.open(STAGE_BINARY_READ_MODE) as stream:
+        os.fsync(stream.fileno())
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 def _separate_track(
     track: DownloadRecord, artist: str, ctx: _RunContext, report: PipelineReport
 ) -> bool:
@@ -298,12 +317,17 @@ def _separate_track(
     the track is ready for the upload stage, False when it was handled here
     (already-failed QA or an error) and the caller should move on."""
     if ctx.history.is_separated(track.video_id, ctx.model):
-        logger.info("Already separated: %s", track.title)
-        return True
+        existing = ctx.history.get_separation_record(track.video_id, ctx.model)
+        if not existing.quality_passed or Path(existing.instrumental_path).is_file():
+            logger.info("Already separated: %s", track.title)
+            return True
+        logger.warning(MISSING_STAGE_OUTPUT_LOG, track.video_id)
 
     logger.info("Separating: %s with %s", track.title, ctx.display_name)
     try:
         audio_path = Path(track.audio_path)
+        if not audio_path.is_file():
+            audio_path = download_track_audio(track.video_id, ctx.tmp_dir)
         sep_result = ctx.separator.separate(audio_path, ctx.output_dir / ctx.model)
 
         trim_start_t = 0.0
@@ -343,6 +367,7 @@ def _separate_track(
                         logger.warning("Failed to trim vocals track: %s", ve)
 
         qa = check_quality(sep_result.instrumental_path)
+        _sync_stage_output(sep_result.instrumental_path)
         ctx.history.record_separation(
             track.video_id, ctx.model, str(sep_result.instrumental_path), qa.passed, trim_start_seconds=trim_start_t
         )
@@ -366,7 +391,21 @@ def _separate_track(
     return True
 
 
-def _upload_short_track(
+def _upload_short_track(track, artist, album, long_form_yt_id, start_time, ctx, report):
+    if not _shorts_enabled(ctx):
+        return
+    try:
+        _perform_short_track(track, artist, album, long_form_yt_id, start_time, ctx, report)
+    finally:
+        separation = ctx.history.get_separation_record(track.video_id, ctx.model)
+        terminal_quality = separation is not None and not separation.quality_passed
+        if (not terminal_quality and not ctx.history.is_short_uploaded(track.video_id, ctx.model)
+                and ctx.history.get_short_status(track.video_id, ctx.model) not in SHORT_SKIPPED_STATUSES):
+            report.failed += 1
+            report.tracks.append(TrackReport(track.video_id, track.title, artist, SHORT_RETRYABLE_FAILURE))
+
+
+def _perform_short_track(
     track: DownloadRecord,
     artist: str,
     album: str,
@@ -429,6 +468,7 @@ def _upload_short_track(
                     start_time = start_t
 
             qa = check_quality(instrumental_path)
+            _sync_stage_output(instrumental_path)
             ctx.history.record_separation(
                 track.video_id, ctx.model, str(instrumental_path), qa.passed, trim_start_seconds=trim_start_t
             )
@@ -644,14 +684,15 @@ def _upload_short_track(
             ctx.history, ctx.label_config.upload_interval_seconds,
             ctx.label_config.upload_interval_jitter_seconds,
         )
-        short_yt_id = upload_video(
-            ctx.service,
-            short_video_path,
-            short_title,
-            short_desc,
-            ctx.privacy,
-            max_total_wait_seconds=ctx.upload_max_wait_seconds,
-        )
+        with upload_journal(ctx.history, track.video_id, ctx.model, UPLOAD_KIND_SHORT):
+            short_yt_id = upload_video(
+                ctx.service,
+                short_video_path,
+                short_title,
+                short_desc,
+                ctx.privacy,
+                max_total_wait_seconds=ctx.upload_max_wait_seconds,
+            )
         ctx.history.record_short_upload(
             track.video_id,
             ctx.model,
@@ -823,10 +864,11 @@ def _upload_track(
             ctx.history, ctx.label_config.upload_interval_seconds,
             ctx.label_config.upload_interval_jitter_seconds,
         )
-        yt_video_id = upload_video(
-            ctx.service, video_path, title, description, ctx.privacy,
-            max_total_wait_seconds=ctx.upload_max_wait_seconds,
-        )
+        with upload_journal(ctx.history, track.video_id, ctx.model, UPLOAD_KIND_INSTRUMENTAL):
+            yt_video_id = upload_video(
+                ctx.service, video_path, title, description, ctx.privacy,
+                max_total_wait_seconds=ctx.upload_max_wait_seconds,
+            )
         ctx.history.record_upload(track.video_id, ctx.model, yt_video_id, ctx.privacy)
         report.uploaded += 1
 

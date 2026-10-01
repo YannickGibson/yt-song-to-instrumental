@@ -1,0 +1,5 @@
+# Install with uv pip in the independent worker environment, never uv sync.
+-e .
+audio-separator[cpu]==0.47.0
+torch==2.14.0
+demucs==4.1.0

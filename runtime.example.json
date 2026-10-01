@@ -1,0 +1,28 @@
+{
+  "label": "local.yt-instrumental",
+  "username": "example",
+  "project": "/path/to/project",
+  "runtime_dir": "/path/to/private/runtime",
+  "database": "/path/to/project/data/history.db",
+  "worker_lock": "/path/to/private/worker.lock",
+  "worker_log": "/path/to/private/worker.log",
+  "pause_file": "/path/to/private/paused",
+  "command": [
+    "/path/to/project/.venv-mac/bin/python",
+    "-m", "yt_song_to_instrumental.cli",
+    "--model", "mel_gabox_instv7n", "--upload-timeout", "120"
+  ],
+  "backup_databases": [
+    "/path/to/project/data/history.db",
+    "/path/to/project/data/youtube-quota.db"
+  ],
+  "timezone": "UTC",
+  "environment": {
+    "DB_PATH": "/path/to/project/data/history.db",
+    "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "PYTHONUNBUFFERED": "1",
+    "OMP_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "PYTORCH_ENABLE_MPS_FALLBACK": "1"
+  }
+}

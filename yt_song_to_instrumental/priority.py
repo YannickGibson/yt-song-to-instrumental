@@ -5,6 +5,8 @@ from pathlib import Path
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.constants import (
     PRIORITY_ERROR_NO_TRACK,
+    RETRYABLE_PIPELINE_FAILURE_STATUSES,
+    PRIORITY_RETRYABLE_FAILURE,
     PRIORITY_ERROR_REPORT_PREFIX,
     PRIORITY_ERROR_REQUESTED_OUTPUTS,
     PRIORITY_ERROR_SHORT_START_NEGATIVE,
@@ -18,6 +20,7 @@ from yt_song_to_instrumental.constants import (
 from yt_song_to_instrumental.history import HistoryDB, PriorityRequest
 from yt_song_to_instrumental.pipeline import (
     PipelineReport,
+    TrackReport,
     _extract_target_video_ids,
     _is_single_video_url,
     process_url,
@@ -89,8 +92,11 @@ def process_priority_requests(
                 short_start_seconds=request.short_start_seconds,
             )
         except Exception as exc:
-            history.fail_priority_request(request.id, str(exc))
+            history.fail_priority_request(request.id, str(exc), retryable=True)
             logger.exception("Priority request #%d failed", request.id)
+            results.append((request, PipelineReport(failed=1, tracks=[
+                TrackReport(request.url, str(), str(), PRIORITY_RETRYABLE_FAILURE),
+            ])))
             continue
 
         results.append((request, report))
@@ -105,7 +111,8 @@ def process_priority_requests(
             if request.upload_short and report.failed == 0
             else _report_failure_reason(report)
         )
-        history.fail_priority_request(request.id, reason)
+        retryable = any(track.status in RETRYABLE_PIPELINE_FAILURE_STATUSES for track in report.tracks)
+        history.fail_priority_request(request.id, reason, retryable=retryable)
         logger.error("Priority request #%d failed: %s", request.id, reason)
 
     return results
