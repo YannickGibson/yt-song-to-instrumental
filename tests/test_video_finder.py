@@ -68,6 +68,23 @@ def test_same_artist_name_and_official_label_cannot_impersonate_channel(index):
     assert not is_trusted_music_video("approved", "Artist - Track (Official Video)", None)
 
 
+@patch("yt_song_to_instrumental.video_finder.get_channel_videos")
+def test_explicit_request_can_screen_unlabeled_source_only_in_approved_channel(index):
+    index.return_value = [{"id": "approved", "title": "Track"}]
+    assert not is_trusted_music_video("approved", "Track", "channel")
+    assert is_trusted_music_video("approved", "Track", "channel", requested_source=True)
+    assert not is_trusted_music_video("unrelated", "Track", "channel", requested_source=True)
+    assert not is_trusted_music_video("approved", "Track", None, requested_source=True)
+
+
+@pytest.mark.parametrize("title", ["Track (Visualizer)", "Track (Gameplay)", "Track (Official Audio)", "Track (Fan Edit)", ""])
+@patch("yt_song_to_instrumental.video_finder.get_channel_videos")
+def test_requested_source_still_rejects_non_music_video_labels(index, title):
+    index.return_value = [{"id": "approved", "title": title}]
+    assert not is_trusted_music_video("approved", title, "channel", requested_source=True)
+    index.assert_not_called()
+
+
 @patch("yt_dlp.YoutubeDL")
 def test_channel_tab_is_normalized_and_cached(ydl):
     _channel_video_cache.clear()

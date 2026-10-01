@@ -5,6 +5,11 @@ cannot recognize dangerous imagery or guarantee platform policy compliance.
 
 Before visual screening, both direct sources and alternate candidates must have
 an explicit music-video label and appear in the approved channel's Videos tab.
+An explicitly requested Short may use its exact original source without that
+label, but still requires approved-channel membership, no rejected content labels,
+and all structural checks. This exception never broadens alternate searches.
+If the metadata API budget is exhausted, the original title can be read from
+the exact public video page; missing or mismatched metadata remains retryable.
 `video_channel_url` chooses that channel; otherwise the original release channel
 is used. Display names and claims of being “official” cannot authorize unrelated
 uploads. Global search is disabled. Gaming and fan-edit labels are rejected, and

@@ -576,7 +576,8 @@ def _perform_short_track(
     motion_diff = SHORT_DEFAULT_START_SECONDS
     music_video_url = None
     try:
-        trusted_source = is_trusted_music_video(track.video_id, source_title, trusted_video_channel)
+        trusted_source = is_trusted_music_video(track.video_id, source_title, trusted_video_channel,
+                                               requested_source=ctx.force_short)
     except VideoChannelUnavailable:
         ctx.history.record_short_status(track.video_id, ctx.model, SHORT_SOURCE_METADATA_UNAVAILABLE)
         return

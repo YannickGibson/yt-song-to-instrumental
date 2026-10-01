@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
+import yt_dlp
 from PIL import Image, ImageFilter
 
 from yt_song_to_instrumental.constants import (
@@ -26,6 +27,9 @@ from yt_song_to_instrumental.constants import (
     SHORT_DEFAULT_SAMPLE_FPS, SHORT_REJECT_TITLE_PATTERN,
     SHORT_MUSIC_VIDEO_TITLE_PATTERN,
     SHORT_SOURCE_TITLE_QUOTA_LOG,
+    SHORT_PUBLIC_TITLE_OPTIONS, SHORT_PUBLIC_TITLE_KEY, SHORT_PUBLIC_TITLE_ID_KEY,
+    SHORT_PUBLIC_TITLE_FALLBACK_LOG, SHORT_PUBLIC_TITLE_FAILED_LOG,
+    YOUTUBE_CANONICAL_VIDEO_URL,
 )
 from yt_song_to_instrumental.youtube_quota import QuotaReserved
 
@@ -33,6 +37,24 @@ logger = logging.getLogger(__name__)
 
 _AUDIO_INDICATOR_PATTERN = re.compile(SHORT_REJECT_TITLE_PATTERN, re.IGNORECASE)
 _MUSIC_VIDEO_TITLE_PATTERN = re.compile(SHORT_MUSIC_VIDEO_TITLE_PATTERN, re.IGNORECASE)
+
+
+def has_rejected_video_label(title: str) -> bool:
+    return bool(_AUDIO_INDICATOR_PATTERN.search(title))
+
+
+def get_public_source_title(video_id: str) -> str | None:
+    """Read raw public metadata for the exact source without consuming API quota."""
+    try:
+        with yt_dlp.YoutubeDL(dict(SHORT_PUBLIC_TITLE_OPTIONS)) as extractor:
+            info = extractor.extract_info(YOUTUBE_CANONICAL_VIDEO_URL.format(video_id=video_id), download=False)
+        if info and info.get(SHORT_PUBLIC_TITLE_ID_KEY) == video_id:
+            title = info.get(SHORT_PUBLIC_TITLE_KEY)
+            if isinstance(title, str) and title.strip():
+                return title
+    except Exception:
+        logger.warning(SHORT_PUBLIC_TITLE_FAILED_LOG)
+    return None
 
 
 def has_music_video_label(title: str) -> bool:
@@ -56,6 +78,10 @@ def get_source_video_title(service, video_id: str) -> str | None:
                 if isinstance(title, str) and title.strip():
                     return title
     except QuotaReserved:
+        logger.info(SHORT_PUBLIC_TITLE_FALLBACK_LOG)
+        title = get_public_source_title(video_id)
+        if title is not None:
+            return title
         logger.warning(SHORT_SOURCE_TITLE_QUOTA_LOG)
     except Exception:
         logger.warning("Source title unavailable; refusing unverified Short source")
