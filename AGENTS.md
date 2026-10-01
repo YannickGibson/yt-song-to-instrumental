@@ -75,18 +75,3 @@ overlap; never sum them or treat them as minimum system RAM. The 8 GB budget
 remains an estimate, and 8 GB system compatibility is unverified. Keep one
 worker with batch size 1, allow headroom for the OS and subprocesses, and
 preserve measurement scope and caveats from README.md.
-
-## CI & Test dependencies
-- When running tests in CI (`.github/workflows/ci.yml`) or in fresh environments, install dependencies with `uv sync --extra dev --extra all-models` (or `uv sync --all-extras`).
-- `tests/test_separator.py` imports separator backend modules directly (e.g. `inst_hq_4_backend.py`), which loads `audio_separator` requiring `onnxruntime` at import time. Omitting `onnxruntime` will cause CI test collection to fail with `ModuleNotFoundError: No module named 'onnxruntime'`.
-
-## Managed macOS runtime
-- Runtime, control, installation and upload recovery code belongs in the package.
-- Use the private JSON deployment config with `python -m yt_song_to_instrumental.runtime_control`.
-- On macOS, enqueue priority requests normally, then request `run-now`; do not invoke systemctl or start another pipeline.
-- Preserve the existing runtime directory and shared worker-lock path during migration. Inspect stages before stopping; `install` refuses an active worker and pauses admission.
-- Never synchronize the MPS environment with the development lockfile. Provision it with `scripts/install-mac-worker.sh` only while the worker is stopped.
-- A LaunchAgent requires login; boot-time daemon installation requires administrator privileges and an ordinary configured UserName. Verify MPS after logout before claiming unattended logout support.
-
-- Managed runs must refresh all configured sources before upload admission and reselect fresh work; never drain a stale per-source snapshot for hours before scanning the next artist.
-- Releases within the configured recent_upload_window_days (default 30 UTC calendar days) upload consecutively through the single worker; older/unknown dates retain paced uploads. Preserve quota checks and instrumental-before-Short ordering.
