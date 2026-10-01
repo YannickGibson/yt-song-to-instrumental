@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from pathlib import Path
+import time
 
 from yt_song_to_instrumental import constants as C
 from yt_song_to_instrumental.config import Source
@@ -21,6 +22,7 @@ class SourceCoordinator:
         self.label_config = label_config
         self.shorts_only = shorts_only
         self.attempted = set()
+        self.retry_after = {}
         self.failed_sources = set()
 
     def refresh(self):
@@ -56,6 +58,10 @@ class SourceCoordinator:
                     Source(url=track.url, after_date=None))
 
     def candidates(self, current=None):
+        for video_id, deadline in tuple(self.retry_after.items()):
+            if time.monotonic() >= deadline:
+                self.attempted.discard(video_id)
+                del self.retry_after[video_id]
         tracks = _select_tracks(
             self.history, self.model, False,
             shorts_enabled=self.label_config.upload_short or self.label_config.upload_short_if_music_video,
@@ -65,6 +71,10 @@ class SourceCoordinator:
         # Stable partition preserves release/album ordering inside each group.
         return sorted(tracks, key=lambda track: not is_recent_release(
             track.release_date, self.label_config.recent_upload_window_days))
+
+    def record_attempt_result(self, video_id, reports):
+        if any(report.status in C.RETRYABLE_PIPELINE_FAILURE_STATUSES for report in reports):
+            self.retry_after[video_id] = time.monotonic() + C.SOURCE_RETRY_SECONDS
 
     def before_upload(self, track, priority_request=False):
         self.refresh()

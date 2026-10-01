@@ -8,7 +8,7 @@ import pytest
 from yt_song_to_instrumental.config import AppConfig, LabelConfig, Source
 from yt_song_to_instrumental.downloader import download_tracks
 from yt_song_to_instrumental.history import HistoryDB
-from yt_song_to_instrumental.pipeline import PipelineReport, _admit_upload, _upload_short_track, process_url
+from yt_song_to_instrumental.pipeline import PipelineReport, TrackReport, _admit_upload, _upload_short_track, process_url
 from yt_song_to_instrumental.source_refresh import SourceCoordinator
 from yt_song_to_instrumental.upload_pacing import UploadDeferred, is_recent_release, wait_for_upload_slot
 
@@ -234,3 +234,36 @@ def test_recent_batch_resets_older_backlog_spacing(queue, tmp_path, monkeypatch)
     with pytest.raises(KeyboardInterrupt):
         _admit_upload(older, context)
     assert 5390 <= sleep.call_args.args[0] <= 9000
+
+
+@pytest.mark.parametrize("status", ["separation_failed", "render_failed", "upload_failed", "no_thumbnail", "short_failed"])
+def test_failed_recent_work_reenters_queue_during_long_paced_run(queue, tmp_path, monkeypatch, status):
+    db, _, coordinator = queue
+    recent = add_track(db, tmp_path, "NewTrack001", 1)
+    old = add_track(db, tmp_path, "OldTrack001", 60)
+    if status == "short_failed":
+        coordinator.label_config.upload_short = True
+        db.record_upload(recent.video_id, "htdemucs", "full-upload", "public")
+    clock = Mock(return_value=0)
+    monkeypatch.setattr("yt_song_to_instrumental.source_refresh.time.monotonic", clock)
+    monkeypatch.setattr(coordinator, "refresh", Mock())
+    coordinator.attempted.add(recent.video_id)
+    coordinator.record_attempt_result(recent.video_id, [TrackReport(recent.video_id, recent.title, recent.artist, status)])
+    clock.return_value = 899
+    assert coordinator.candidates()[0].video_id == old.video_id
+    clock.return_value = 900
+    with pytest.raises(UploadDeferred):
+        coordinator.before_upload(old)
+    assert coordinator.candidates()[0].video_id == recent.video_id
+    assert db.get_separation_record(old.video_id, "htdemucs").quality_passed
+    if status == "short_failed":
+        assert db.get_existing_upload(recent.video_id).youtube_upload_id == "full-upload"
+
+
+def test_terminal_quality_rejection_is_not_retried_on_cooldown(queue, tmp_path, monkeypatch):
+    db, _, coordinator = queue
+    track = add_track(db, tmp_path, "NewTrack001", 1)
+    coordinator.attempted.add(track.video_id)
+    coordinator.record_attempt_result(track.video_id, [TrackReport(track.video_id, track.title, track.artist, "quality_failed")])
+    monkeypatch.setattr("yt_song_to_instrumental.source_refresh.time.monotonic", lambda: 10000)
+    assert coordinator.candidates() == []

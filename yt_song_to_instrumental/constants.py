@@ -603,6 +603,7 @@ RECENT_UPLOAD_WINDOW_ERROR = "recent_upload_window_days must be a nonnegative in
 SOURCE_DATE_FORMAT = "%Y%m%d"
 SOURCE_SCAN_WORKERS = 4
 SOURCE_SCAN_POLL_SECONDS = 900
+SOURCE_RETRY_SECONDS = 900
 SOURCE_SCAN_START_LOG = "Refreshing all %d configured sources before queue admission"
 SOURCE_SCAN_COMPLETE_LOG = "Source refresh complete: %d sources, %d new downloads, %d failed scans"
 SOURCE_SCAN_FAILED_LOG = "Source refresh failed for %s: %s"

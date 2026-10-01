@@ -201,6 +201,7 @@ def process_url(
         force_short=force_short,
         coordinator=coordinator if not priority_request else None,
     ):
+        track_report_start = len(report.tracks)
         if coordinator is not None and not priority_request:
             coordinator.attempted.add(track.video_id)
             source = coordinator.source_for(track)
@@ -220,6 +221,8 @@ def process_url(
 
         existing_upload = history.get_existing_upload(track.video_id) if not skip_upload else None
         if existing_upload is None and not _separate_track(track, artist, ctx, report):
+            if coordinator is not None and not priority_request:
+                coordinator.record_attempt_result(track.video_id, report.tracks[track_report_start:])
             continue
 
         if skip_upload:
@@ -232,6 +235,8 @@ def process_url(
         except UploadDeferred:
             coordinator.attempted.discard(track.video_id)
             logger.info(SOURCE_DEFERRED_LOG, track.video_id)
+        if coordinator is not None and not priority_request:
+            coordinator.record_attempt_result(track.video_id, report.tracks[track_report_start:])
 
     if owns_history:
         history.close()

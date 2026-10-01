@@ -402,7 +402,9 @@ Managed runs scan every configured source before selecting work and again
 before every instrumental or Short upload. The queue is reselected after each
 scan, allowing new releases and priority requests to supersede a prepared older
 track without deleting its completed stages. During older-track pacing waits,
-source scans repeat every 15 minutes. Discovery uses the configured source URLs,
+source scans repeat every 15 minutes. Retryable track failures become eligible
+again after a 15-minute cooldown even while the same worker continues the backlog.
+Discovery uses the configured source URLs,
 tabs, and date cutoffs; a fixed album playlist still only discovers that playlist.
 Source memberships persist in SQLite so each track retains its own source's
 video-channel, title and album-playlist settings.
