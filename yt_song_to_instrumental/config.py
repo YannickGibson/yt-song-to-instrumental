@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 
 import yaml
@@ -9,12 +10,21 @@ from pydantic_settings import BaseSettings
 
 from yt_song_to_instrumental.constants import (
     AFTER_DATE_PATTERN,
+    DEFAULT_RECENT_UPLOAD_WINDOW_DAYS,
+    RECENT_UPLOAD_WINDOW_KEY,
+    RECENT_UPLOAD_WINDOW_ERROR,
     AVAILABLE_MODELS,
     DEFAULT_MODEL,
     DEFAULT_PRIVACY_STATUS,
+    DEFAULT_UPLOAD_INTERVAL_SECONDS,
+    DEFAULT_UPLOAD_INTERVAL_JITTER_SECONDS,
     LABEL_CONFIG_FILENAME,
     DEFAULT_TRIM_SILENCE,
     DEFAULT_TRIM_THRESHOLD_DB,
+    UPLOAD_INTERVAL_CONFIG_ERROR,
+    UPLOAD_INTERVAL_CONFIG_KEY,
+    UPLOAD_INTERVAL_JITTER_CONFIG_ERROR,
+    UPLOAD_INTERVAL_JITTER_CONFIG_KEY,
 )
 
 _AFTER_DATE_RE = re.compile(AFTER_DATE_PATTERN)
@@ -203,6 +213,38 @@ class LabelConfig:
         self.trim_silence: bool = raw_trim_silence if raw_trim_silence is not None else DEFAULT_TRIM_SILENCE
         raw_trim_threshold_db = data.get("trim_silence_threshold_db")
         self.trim_silence_threshold_db: float = raw_trim_threshold_db if raw_trim_threshold_db is not None else DEFAULT_TRIM_THRESHOLD_DB
+
+        # Optional shared upload cadence; disabled for existing configurations.
+        raw_interval = data.get(UPLOAD_INTERVAL_CONFIG_KEY)
+        if raw_interval is None:
+            raw_interval = DEFAULT_UPLOAD_INTERVAL_SECONDS
+        if (
+            isinstance(raw_interval, bool)
+            or not isinstance(raw_interval, (int, float))
+            or not isfinite(raw_interval)
+            or raw_interval < DEFAULT_UPLOAD_INTERVAL_SECONDS
+        ):
+            raise ValueError(UPLOAD_INTERVAL_CONFIG_ERROR)
+        self.upload_interval_seconds = float(raw_interval)
+        raw_jitter = data.get(UPLOAD_INTERVAL_JITTER_CONFIG_KEY)
+        if raw_jitter is None:
+            raw_jitter = DEFAULT_UPLOAD_INTERVAL_JITTER_SECONDS
+        if (
+            isinstance(raw_jitter, bool)
+            or not isinstance(raw_jitter, (int, float))
+            or not isfinite(raw_jitter)
+            or raw_jitter < DEFAULT_UPLOAD_INTERVAL_JITTER_SECONDS
+            or raw_jitter > self.upload_interval_seconds
+        ):
+            raise ValueError(UPLOAD_INTERVAL_JITTER_CONFIG_ERROR)
+        self.upload_interval_jitter_seconds = float(raw_jitter)
+
+        recent_window = data.get(RECENT_UPLOAD_WINDOW_KEY)
+        if recent_window is None:
+            recent_window = DEFAULT_RECENT_UPLOAD_WINDOW_DAYS
+        if isinstance(recent_window, bool) or not isinstance(recent_window, int) or recent_window < DEFAULT_UPLOAD_INTERVAL_SECONDS:
+            raise ValueError(RECENT_UPLOAD_WINDOW_ERROR)
+        self.recent_upload_window_days = recent_window
 
         # Optional YouTube Shorts upload configuration
         self.upload_short: bool = bool(data.get("upload_short", False))

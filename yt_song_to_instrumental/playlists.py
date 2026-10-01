@@ -1,13 +1,21 @@
 import logging
 import re
+from contextlib import nullcontext
+
+from googleapiclient.errors import HttpError
 
 from yt_song_to_instrumental.config import LabelConfig
-from yt_song_to_instrumental.constants import ALBUM_GROUP_PREFIX, SINGLE_GROUP_PREFIX, PLAYLIST_RETRY_BATCH_SIZE
+from yt_song_to_instrumental.constants import (
+    ALBUM_GROUP_PREFIX, SINGLE_GROUP_PREFIX, PLAYLIST_RETRY_BATCH_SIZE,
+    PLAYLIST_TYPE_SHORTS, SHORTS_PLAYLIST_TITLE, PLAYLIST_PAGE_SIZE,
+    PLAYLIST_INVALID_RESPONSE_ERROR,
+    PLAYLIST_QUOTA_ERRORS,
+)
 from yt_song_to_instrumental.history import DownloadRecord, HistoryDB
 from yt_song_to_instrumental.metadata import render_playlist_name, strip_topic_suffix
 from yt_song_to_instrumental.music_metadata import album_is_self_titled_single
-from yt_song_to_instrumental.uploader import add_video_to_playlist
-from yt_song_to_instrumental.youtube_quota import QuotaLedger
+from yt_song_to_instrumental.uploader import add_video_to_playlist, _extract_error_reason
+from yt_song_to_instrumental.youtube_quota import QuotaLedger, QuotaReserved
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +188,45 @@ def project_playlist_artists(
     return resolved_names
 
 
+def get_or_create_shorts_playlist(service, history, label_config, privacy="public") -> str:
+    record = history.get_playlist(PLAYLIST_TYPE_SHORTS, label_config.channel_name)
+    if record is not None:
+        _ensure_playlist_privacy(service, record.youtube_playlist_id, privacy)
+        return record.youtube_playlist_id
+    # Recover creation that reached YouTube before its local record committed.
+    page_token = None
+    while True:
+        response = service.playlists().list(
+            part="snippet,status", mine=True, maxResults=PLAYLIST_PAGE_SIZE,
+            pageToken=page_token,
+        ).execute()
+        if not isinstance(response["items"], list):
+            raise ValueError(PLAYLIST_INVALID_RESPONSE_ERROR)
+        for item in response["items"]:
+            if item["snippet"]["title"].strip().casefold() == SHORTS_PLAYLIST_TITLE:
+                playlist_id = item["id"]
+                history.record_playlist(PLAYLIST_TYPE_SHORTS, label_config.channel_name, None, playlist_id)
+                _ensure_playlist_privacy(service, playlist_id, privacy)
+                return playlist_id
+        page_token = response.get("nextPageToken")
+        if not isinstance(page_token, str) or not page_token:
+            break
+    playlist_id = _create_playlist(service, SHORTS_PLAYLIST_TITLE, privacy=privacy)
+    history.record_playlist(PLAYLIST_TYPE_SHORTS, label_config.channel_name, None, playlist_id)
+    return playlist_id
+
+
+def queue_unassigned_shorts(history: HistoryDB) -> None:
+    """Recover old Shorts and crashes between recording an upload and assignment."""
+    for upload in history.get_all_uploads():
+        video_id = upload.youtube_short_upload_id
+        if video_id and not history.has_playlist_assignment(video_id):
+            history.queue_playlist_assignment(video_id, dict(
+                video_id=video_id, artist="", album="", primary_artist="",
+                privacy=upload.privacy, is_short=True,
+            ))
+
+
 
 def project_playlist_names(
     label_config: LabelConfig,
@@ -223,15 +270,30 @@ def assign_to_playlists(
     privacy: str = "public",
     track_title: str = "",
     create_album_playlists: bool = True,
+    is_short: bool = False,
 ) -> None:
     history.queue_playlist_assignment(video_id, dict(
         video_id=video_id, artist=artist, album=album, primary_artist=primary_artist,
         privacy=privacy, track_title=track_title,
         create_album_playlists=create_album_playlists,
+        is_short=is_short,
     ))
     ledger = getattr(service, 'quota_ledger', None)
     if not isinstance(ledger, QuotaLedger):
         ledger = None
+    # Serialize the whole read/insert sequence with other managed API callers.
+    with ledger.lock() if ledger is not None else nullcontext():
+        with ledger.membership_lane() if ledger is not None else nullcontext():
+            _assign_to_playlists(
+                service, history, label_config, video_id, artist, album, primary_artist,
+                privacy, track_title, create_album_playlists, is_short, ledger,
+            )
+
+
+def _assign_to_playlists(
+    service, history, label_config, video_id, artist, album, primary_artist,
+    privacy, track_title, create_album_playlists, is_short, ledger,
+) -> None:
     ranks = upload_ranks(history, ledger)
     anchors = set()
     if ledger is not None:
@@ -241,32 +303,51 @@ def assign_to_playlists(
             )}
     # Every upload also goes into the single per-label "all uploads" playlist —
     # the chronological feed of everything this channel has published.
-    channel_playlist_id = get_or_create_channel_playlist(
-        service, history, label_config, privacy,
-    )
-    add_video_to_playlist(service, channel_playlist_id, video_id, ranks=ranks, anchors=anchors)
-
-    for resolved in project_playlist_artists(label_config, artist, track_title, primary_artist):
-        artist_playlist_id = get_or_create_artist_playlist(
-            service, history, label_config, resolved, privacy,
+    if is_short:
+        destinations = [(get_or_create_shorts_playlist, (privacy,))]
+    else:
+        destinations = [(get_or_create_channel_playlist, (privacy,))]
+        destinations.extend(
+            (get_or_create_artist_playlist, (resolved, privacy))
+            for resolved in project_playlist_artists(label_config, artist, track_title, primary_artist)
         )
-        add_video_to_playlist(service, artist_playlist_id, video_id, ranks=ranks, anchors=anchors)
-
-    if create_album_playlists and album and not album_is_self_titled_single(album, track_title):
-        album_artist = label_config.artist_aliases.resolve(primary_artist)
-        album_playlist_id = get_or_create_album_playlist(
-            service, history, label_config, album_artist, album, privacy,
-        )
-        add_video_to_playlist(service, album_playlist_id, video_id, ranks=ranks, anchors=anchors)
-
+        if create_album_playlists and album and not album_is_self_titled_single(album, track_title):
+            album_artist = label_config.artist_aliases.resolve(primary_artist)
+            destinations.append((get_or_create_album_playlist, (album_artist, album, privacy)))
+    errors = []
+    for get_playlist, args in destinations:
+        try:
+            playlist_id = get_playlist(service, history, label_config, *args)
+            add_video_to_playlist(service, playlist_id, video_id, ranks=ranks, anchors=anchors)
+        except QuotaReserved:
+            raise
+        except HttpError as error:
+            if _extract_error_reason(error) in PLAYLIST_QUOTA_ERRORS:
+                raise
+            errors.append(error)
+        except Exception as error:
+            # One unavailable destination must not suppress the other playlists.
+            errors.append(error)
+    if errors:
+        raise errors[0]
     history.complete_playlist_assignment(video_id)
 
 
-def retry_playlist_assignments(service, history: HistoryDB, label_config: LabelConfig) -> None:
+def retry_playlist_assignments(
+    service, history: HistoryDB, label_config: LabelConfig,
+    limit: int = PLAYLIST_RETRY_BATCH_SIZE,
+) -> None:
     """Bounded recovery in the existing worker, including restart after partial insertion."""
-    for assignment in history.pending_playlist_assignments(PLAYLIST_RETRY_BATCH_SIZE):
+    for assignment in history.pending_playlist_assignments(limit):
         try:
             assign_to_playlists(service, history, label_config, **assignment)
+        except QuotaReserved:
+            logger.warning("Playlist assignments remain queued until API budget is available")
+            break
+        except HttpError as error:
+            logger.warning("Playlist assignment remains queued for retry")
+            if _extract_error_reason(error) in PLAYLIST_QUOTA_ERRORS:
+                break
         except Exception:
             logger.warning("Playlist assignment remains queued for retry")
 
@@ -327,6 +408,9 @@ def upload_ranks(history, ledger=None):
     ranks = {upload.youtube_upload_id: sources[upload.video_id]
              for upload in history.get_all_uploads()
              if upload.video_id in sources and upload.youtube_upload_id}
+    ranks.update({upload.youtube_short_upload_id: sources[upload.video_id]
+                  for upload in history.get_all_uploads()
+                  if upload.video_id in sources and upload.youtube_short_upload_id})
     if ledger is not None:
         with ledger.connect() as db:
             for video, source in db.execute('SELECT youtube_video_id, source_video_id FROM repair_metadata'):

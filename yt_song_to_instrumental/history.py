@@ -6,8 +6,18 @@ from pathlib import Path
 
 from yt_song_to_instrumental.constants import (
     DATA_DIR,
+    SOURCE_MEMBERSHIP_SCHEMA,
+    SOURCE_MEMBERSHIP_SAVE_QUERY,
+    SOURCE_MEMBERSHIP_LOAD_QUERY,
+    SOURCE_PENDING_PRIORITY_QUERY,
     DB_FILENAME,
+    HISTORY_EXISTING_UPLOAD_QUERY,
+    HISTORY_LATEST_UPLOAD_QUERY,
+    HISTORY_UPLOAD_TIMESTAMP_COLUMN,
     PRIORITY_STATUS_COMPLETED,
+    PRIORITY_RETRYABLE_ERROR_PREFIX,
+    PRIORITY_REQUEUE_FAILED_QUERY,
+    PRIORITY_RETRYABLE_ERROR_PATTERN,
     PRIORITY_STATUS_FAILED,
     PRIORITY_STATUS_PENDING,
     PRIORITY_STATUS_PROCESSING,
@@ -74,13 +84,17 @@ class PriorityRequest:
     finished_at: str | None
     error: str
     upload_short: int = 0
-    short_start_seconds: float = 0.0
+    short_start_seconds: float | None = None
 
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS pending_playlist_assignments (
     youtube_video_id TEXT PRIMARY KEY,
     assignment_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS completed_playlist_assignments (
+    youtube_video_id TEXT PRIMARY KEY
 );
 
 CREATE TABLE IF NOT EXISTS downloads (
@@ -141,7 +155,7 @@ CREATE TABLE IF NOT EXISTS priority_requests (
     finished_at TEXT,
     error TEXT NOT NULL DEFAULT '',
     upload_short INTEGER NOT NULL DEFAULT 0,
-    short_start_seconds REAL NOT NULL DEFAULT 0.0
+    short_start_seconds REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_priority_requests_status_order
@@ -158,7 +172,7 @@ class HistoryDB:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self._db_path))
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(_SCHEMA)
+        self._conn.executescript(_SCHEMA + SOURCE_MEMBERSHIP_SCHEMA)
         self._migrate()
 
     def _migrate(self):
@@ -186,24 +200,59 @@ class HistoryDB:
                 if col_name not in existing_cols:
                     self._conn.execute(f"ALTER TABLE uploads ADD COLUMN {col_name} {col_type}")
 
-            existing_priority_cols = {
-                row["name"]
+            existing_priority_info = {
+                row["name"]: row
                 for row in self._conn.execute(
                     "PRAGMA table_info(priority_requests)"
                 ).fetchall()
             }
-            priority_cols = {
-                "upload_short": "INTEGER NOT NULL DEFAULT 0",
-                "short_start_seconds": "REAL NOT NULL DEFAULT 0.0",
-            }
-            for col_name, col_type in priority_cols.items():
-                if col_name not in existing_priority_cols:
+            if "short_start_seconds" in existing_priority_info:
+                if existing_priority_info["short_start_seconds"]["notnull"]:
+                    self._conn.execute("""
+                        CREATE TABLE priority_requests_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            url TEXT NOT NULL,
+                            requested_at TEXT NOT NULL,
+                            status TEXT NOT NULL,
+                            started_at TEXT,
+                            finished_at TEXT,
+                            error TEXT NOT NULL DEFAULT '',
+                            upload_short INTEGER NOT NULL DEFAULT 0,
+                            short_start_seconds REAL
+                        )
+                    """)
+                    self._conn.execute("""
+                        INSERT INTO priority_requests_new
+                        SELECT id, url, requested_at, status, started_at, finished_at, error, upload_short, short_start_seconds
+                        FROM priority_requests
+                    """)
+                    self._conn.execute("DROP TABLE priority_requests")
+                    self._conn.execute("ALTER TABLE priority_requests_new RENAME TO priority_requests")
+                    self._conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_priority_requests_status_order
+                        ON priority_requests(status, requested_at DESC, id DESC)
+                    """)
+            else:
+                if "upload_short" not in existing_priority_info:
                     self._conn.execute(
-                        f"ALTER TABLE priority_requests ADD COLUMN {col_name} {col_type}"
+                        "ALTER TABLE priority_requests ADD COLUMN upload_short INTEGER NOT NULL DEFAULT 0"
                     )
+                self._conn.execute(
+                    "ALTER TABLE priority_requests ADD COLUMN short_start_seconds REAL"
+                )
             self._conn.commit()
         except Exception:
             pass
+
+    def record_source_membership(self, video_id, source_url, tab):
+        self._conn.execute(SOURCE_MEMBERSHIP_SAVE_QUERY, (video_id, source_url, tab))
+        self._conn.commit()
+
+    def source_memberships(self, video_id):
+        return {tuple(row) for row in self._conn.execute(SOURCE_MEMBERSHIP_LOAD_QUERY, (video_id,))}
+
+    def has_pending_priority_requests(self):
+        return self._conn.execute(SOURCE_PENDING_PRIORITY_QUERY, (PRIORITY_STATUS_PENDING,)).fetchone() is not None
 
     def close(self):
         self._conn.close()
@@ -266,10 +315,21 @@ class HistoryDB:
 
     def complete_playlist_assignment(self, youtube_video_id: str) -> None:
         self._conn.execute(
+            "INSERT OR IGNORE INTO completed_playlist_assignments VALUES (?)",
+            (youtube_video_id,),
+        )
+        self._conn.execute(
             "DELETE FROM pending_playlist_assignments WHERE youtube_video_id = ?",
             (youtube_video_id,),
         )
         self._conn.commit()
+
+    def has_playlist_assignment(self, youtube_video_id: str) -> bool:
+        return self._conn.execute(
+            "SELECT youtube_video_id FROM completed_playlist_assignments WHERE youtube_video_id = ? "
+            "UNION SELECT youtube_video_id FROM pending_playlist_assignments WHERE youtube_video_id = ?",
+            (youtube_video_id, youtube_video_id),
+        ).fetchone() is not None
 
     def pending_playlist_assignments(self, limit: int) -> list[dict]:
         rows = self._conn.execute(
@@ -329,6 +389,23 @@ class HistoryDB:
         return SeparationRecord(**fields)
 
     # --- Uploads ---
+
+    def latest_upload_time(self) -> datetime | None:
+        """Return the latest durable instrumental or Short upload across models."""
+        row = self._conn.execute(HISTORY_LATEST_UPLOAD_QUERY).fetchone()
+        if row is None:
+            return None
+        timestamp = datetime.fromisoformat(row[HISTORY_UPLOAD_TIMESTAMP_COLUMN])
+        return timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp
+
+    def get_existing_upload(self, video_id: str) -> UploadRecord | None:
+        """Return the first durable long-form upload, regardless of model.
+
+        Short-only/status rows do not establish a published instrumental. Keep
+        the original record and model identity when the default model changes.
+        """
+        row = self._conn.execute(HISTORY_EXISTING_UPLOAD_QUERY, (video_id,)).fetchone()
+        return UploadRecord(**dict(row)) if row is not None else None
 
     def is_uploaded(self, video_id: str, model: str) -> bool:
         row = self._conn.execute(
@@ -449,7 +526,7 @@ class HistoryDB:
         url: str,
         *,
         upload_short: bool = False,
-        short_start_seconds: float = 0.0,
+        short_start_seconds: float | None = None,
     ) -> PriorityRequest:
         """Add a request at the front of the pending queue.
 
@@ -463,6 +540,12 @@ class HistoryDB:
             (url, PRIORITY_STATUS_PENDING, PRIORITY_STATUS_PROCESSING),
         ).fetchone()
 
+        start_secs = (
+            float(short_start_seconds)
+            if short_start_seconds is not None
+            else None
+        )
+
         if existing is not None:
             if existing["status"] == PRIORITY_STATUS_PENDING:
                 self._conn.execute(
@@ -473,7 +556,7 @@ class HistoryDB:
                     (
                         self._now(),
                         int(upload_short),
-                        float(short_start_seconds),
+                        start_secs,
                         existing["id"],
                     ),
                 )
@@ -494,7 +577,7 @@ class HistoryDB:
                 self._now(),
                 PRIORITY_STATUS_PENDING,
                 int(upload_short),
-                float(short_start_seconds),
+                start_secs,
             ),
         )
         self._conn.commit()
@@ -551,6 +634,14 @@ class HistoryDB:
         self._conn.commit()
         return cursor.rowcount
 
+    def requeue_failed_priority_requests(self) -> int:
+        cursor = self._conn.execute(
+            PRIORITY_REQUEUE_FAILED_QUERY,
+            (PRIORITY_STATUS_PENDING, PRIORITY_STATUS_FAILED, PRIORITY_RETRYABLE_ERROR_PATTERN),
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
     def complete_priority_request(self, request_id: int) -> None:
         self._conn.execute(
             """UPDATE priority_requests
@@ -560,7 +651,9 @@ class HistoryDB:
         )
         self._conn.commit()
 
-    def fail_priority_request(self, request_id: int, error: str) -> None:
+    def fail_priority_request(self, request_id: int, error: str, *, retryable: bool = False) -> None:
+        if retryable:
+            error = PRIORITY_RETRYABLE_ERROR_PREFIX + error
         self._conn.execute(
             """UPDATE priority_requests
             SET status = ?, finished_at = ?, error = ?

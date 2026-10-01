@@ -10,6 +10,11 @@ if [ -f .env ]; then
     set +a
 fi
 
-exec /home/pi/.local/bin/uv run yt-instrumental \
-    --model htdemucs \
-    --upload-timeout 120
+if [ -n "${YT_WORKER_PYTHON:-}" ]; then
+    exec "$YT_WORKER_PYTHON" -m yt_song_to_instrumental.cli \
+        --model "${YT_SEPARATOR_MODEL:-htdemucs}" \
+        --upload-timeout "${YT_UPLOAD_TIMEOUT_MINUTES:-120}"
+fi
+exec "${UV_BIN:-uv}" run yt-instrumental \
+    --model "${YT_SEPARATOR_MODEL:-htdemucs}" \
+    --upload-timeout "${YT_UPLOAD_TIMEOUT_MINUTES:-120}"

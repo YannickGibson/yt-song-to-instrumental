@@ -14,9 +14,11 @@ from yt_song_to_instrumental.constants import (
     YOUTUBE_QUOTA_FILENAME, YOUTUBE_QUOTA_TIMEZONE, YOUTUBE_QUOTA_NORMAL,
     YOUTUBE_QUOTA_REPAIR, YOUTUBE_QUOTA_DEDICATED, YOUTUBE_API_READ_COST,
     YOUTUBE_API_WRITE_COST, YOUTUBE_QUOTA_TIMEOUT, YOUTUBE_QUOTA_ERROR,
+    YOUTUBE_QUOTA_GENERAL, YOUTUBE_QUOTA_MEMBERSHIP_LANE,
+    YOUTUBE_QUOTA_NORMAL_LANE, YOUTUBE_QUOTA_REPAIR_LANE,
 )
 
-_lane = ContextVar("youtube_quota_lane", default="normal")
+_lane = ContextVar("youtube_quota_lane", default=YOUTUBE_QUOTA_NORMAL_LANE)
 
 
 class QuotaReserved(RuntimeError):
@@ -77,7 +79,7 @@ class QuotaLedger:
 
     @contextmanager
     def repair_lane(self):
-        token = _lane.set('repair')
+        token = _lane.set(YOUTUBE_QUOTA_REPAIR_LANE)
         try:
             yield
         finally:
@@ -91,7 +93,11 @@ class QuotaLedger:
         else:
             bucket = 'general'
             cost = YOUTUBE_API_READ_COST if method_id.endswith('.list') else YOUTUBE_API_WRITE_COST
-            limit = YOUTUBE_QUOTA_REPAIR if _lane.get() == 'repair' else YOUTUBE_QUOTA_NORMAL
+            limit = YOUTUBE_QUOTA_REPAIR if _lane.get() == YOUTUBE_QUOTA_REPAIR_LANE else YOUTUBE_QUOTA_NORMAL
+            if _lane.get() == YOUTUBE_QUOTA_MEMBERSHIP_LANE:
+                # Membership retries may spend the repair allocation, while
+                # leaving the normal allocation available for new work.
+                limit = YOUTUBE_QUOTA_REPAIR
         lane = _lane.get() if bucket == 'general' else 'shared'
         cost *= attempts
         with self.connect() as db:
@@ -99,10 +105,34 @@ class QuotaLedger:
             row = db.execute('SELECT units FROM quota_usage WHERE day=? AND bucket=? AND lane=?',
                              (self.day(), bucket, lane)).fetchone()
             used = row[0] if row else 0
+            if bucket == 'general':
+                total = db.execute(
+                    'SELECT COALESCE(SUM(units), 0) FROM quota_usage WHERE day=? AND bucket=?',
+                    (self.day(), bucket),
+                ).fetchone()[0]
+                if total + cost > YOUTUBE_QUOTA_GENERAL:
+                    raise QuotaReserved(YOUTUBE_QUOTA_ERROR)
+                if lane != YOUTUBE_QUOTA_NORMAL_LANE:
+                    normal_used = db.execute(
+                        'SELECT COALESCE(SUM(units), 0) FROM quota_usage '
+                        'WHERE day=? AND bucket=? AND lane=?',
+                        (self.day(), bucket, YOUTUBE_QUOTA_NORMAL_LANE),
+                    ).fetchone()[0]
+                    if total - normal_used + cost > YOUTUBE_QUOTA_REPAIR:
+                        raise QuotaReserved(YOUTUBE_QUOTA_ERROR)
             if used + cost > limit:
                 raise QuotaReserved(YOUTUBE_QUOTA_ERROR)
             db.execute('INSERT OR REPLACE INTO quota_usage VALUES (?, ?, ?, ?)',
                        (self.day(), bucket, lane, used + cost))
+
+    @contextmanager
+    def membership_lane(self):
+        """Let missing memberships use idle repair capacity within the total cap."""
+        token = _lane.set(YOUTUBE_QUOTA_MEMBERSHIP_LANE)
+        try:
+            yield
+        finally:
+            _lane.reset(token)
 
 
 def quota_path(token_file):

@@ -2,6 +2,7 @@ import argparse
 import logging
 import sys
 from typing import NoReturn
+from pathlib import Path
 
 import yaml
 from pydantic import ValidationError
@@ -16,13 +17,23 @@ from yt_song_to_instrumental.config import (
 from yt_song_to_instrumental.constants import (
     AVAILABLE_MODELS,
     DEFAULT_MODEL,
+    SOURCE_SINGLE_QUEUE_COUNT,
     LABEL_CONFIG_EXAMPLE_FILENAME,
     LABEL_CONFIG_FILENAME,
     VALID_PRIVACY_STATUSES,
+    PLAYLIST_RETRY_OPTION,
+    PLAYLIST_RETRY_HELP,
+    PLAYLIST_RETRY_REPORT,
+    PLAYLIST_RECOVERY_BATCH_SIZE,
+    RETRYABLE_PIPELINE_FAILURE_ERROR,
+    RETRYABLE_PIPELINE_FAILURE_STATUSES,
 )
 from yt_song_to_instrumental.history import HistoryDB
+from yt_song_to_instrumental.source_refresh import SourceCoordinator
 from yt_song_to_instrumental.pipeline import PipelineReport, process_url
 from yt_song_to_instrumental.preview import PreviewReport, preview_url
+from yt_song_to_instrumental.playlists import queue_unassigned_shorts, retry_playlist_assignments
+from yt_song_to_instrumental.uploader import authenticate
 from yt_song_to_instrumental.priority import (
     enqueue_priority_request,
     process_priority_requests,
@@ -180,10 +191,17 @@ def main() -> None:
     parser.add_argument("--no-upload-short", action="store_true", help="Do not upload Shorts in this run")
     parser.add_argument("--enqueue-priority", metavar="YOUTUBE_URL", help="Put one requested video at the front of the upload queue, then exit")
     parser.add_argument("--priority-short", action="store_true", help="Require a Short after the priority instrumental, even when regular Shorts are disabled")
-    parser.add_argument("--priority-short-start", type=float, default=0.0, metavar="SECONDS", help="Start the requested Short this many seconds into the song")
+    parser.add_argument(
+        "--priority-short-start",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Start the requested Short this many seconds into the song (defaults to precise half of the video)",
+    )
     parser.add_argument("--list-priority", action="store_true", help="List priority instrumental requests, then exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
+    parser.add_argument(PLAYLIST_RETRY_OPTION, action="store_true", help=PLAYLIST_RETRY_HELP)
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -213,13 +231,17 @@ def main() -> None:
             f"{request.url}"
         )
         if request.upload_short:
-            print(
-                "Requested outputs: instrumental, then Short "
+            start_desc = (
                 f"starting at {request.short_start_seconds:g}s"
+                if request.short_start_seconds is not None
+                else "starting at precise half of the video"
+            )
+            print(
+                f"Requested outputs: instrumental, then Short {start_desc}"
             )
         return
 
-    if args.priority_short or args.priority_short_start:
+    if args.priority_short or args.priority_short_start is not None:
         parser.error("--priority-short options require --enqueue-priority")
 
     if args.list_priority:
@@ -237,14 +259,34 @@ def main() -> None:
         for request in requests:
             line = f"#{request.id} [{request.status}] {request.url}"
             if request.upload_short:
-                line += f" [Short at {request.short_start_seconds:g}s]"
+                start_desc = (
+                    f"Short at {request.short_start_seconds:g}s"
+                    if request.short_start_seconds is not None
+                    else "Short at video midpoint"
+                )
+                line += f" [{start_desc}]"
             if request.error:
                 line += f" ({request.error})"
             print(line)
         return
 
+    if args.retry_playlists:
+        if args.url or args.skip_upload or args.dry_run:
+            parser.error(PLAYLIST_RETRY_HELP)
+        app_config = AppConfig()
+        label_config = _load_label_config_or_exit()
+        yt_config = _youtube_config_or_exit()
+        service = authenticate(yt_config.client_secrets_file, yt_config.token_file)
+        history = HistoryDB(app_config.db_path)
+        try:
+            queue_unassigned_shorts(history)
+            retry_playlist_assignments(service, history, label_config, limit=PLAYLIST_RECOVERY_BATCH_SIZE)
+        finally:
+            history.close()
+        print(PLAYLIST_RETRY_REPORT)
+        return
+
     if args.cleanup_uploaded:
-        from pathlib import Path
         from yt_song_to_instrumental.cleanup import (
             cleanup_all_uploaded,
             cleanup_orphan_artifacts,
@@ -270,7 +312,6 @@ def main() -> None:
     if args.sync_channel:
         label_config = _load_label_config_or_exit()
         yt_config = _youtube_config_or_exit()
-        from yt_song_to_instrumental.uploader import authenticate
         from yt_song_to_instrumental.channel import sync_channel_metadata
         service = authenticate(yt_config.client_secrets_file, yt_config.token_file)
         sync_channel_metadata(service, label_config)
@@ -340,6 +381,7 @@ def main() -> None:
         )
 
     history = HistoryDB(app_config.db_path)
+    retryable_failure = False
 
     try:
         if args.dry_run:
@@ -357,6 +399,7 @@ def main() -> None:
                 _print_preview_report(report)
             return
 
+        history.requeue_failed_priority_requests()
         recovered_priority_requests = history.requeue_processing_priority_requests()
         if recovered_priority_requests:
             logger.warning(
@@ -367,8 +410,15 @@ def main() -> None:
         service = None
         if not args.skip_upload:
             yt_config = _youtube_config_or_exit()
-            from yt_song_to_instrumental.uploader import authenticate
             service = authenticate(yt_config.client_secrets_file, yt_config.token_file)
+
+        coordinator = None
+        if not args.url and not args.skip_upload and not args.skip_download:
+            coordinator = SourceCoordinator(sources_to_run, history, Path(app_config.tmp_dir),
+                                            effective_model, label_config, args.shorts_only)
+            coordinator.refresh()
+            # Every source is now discovered before draining the shared queue.
+            sources_to_run = sources_to_run[:SOURCE_SINGLE_QUEUE_COUNT]
 
         upload_timeout_seconds = args.upload_timeout * 60 if args.upload_timeout else None
         shared_separator = None
@@ -379,6 +429,7 @@ def main() -> None:
             shared_separator = get_separator(effective_model)
 
             def _drain_priority_requests() -> None:
+                nonlocal retryable_failure
                 priority_results = process_priority_requests(
                     config=app_config,
                     label_config=label_config,
@@ -390,9 +441,15 @@ def main() -> None:
                     upload_max_wait_seconds=upload_timeout_seconds,
                     cleanup_after_upload=not args.no_cleanup,
                     trim_silence=trim_silence,
+                    coordinator=coordinator,
                 )
                 for _, priority_report in priority_results:
                     _print_pipeline_report(priority_report)
+                    if any(
+                        track.status in RETRYABLE_PIPELINE_FAILURE_STATUSES
+                        for track in priority_report.tracks
+                    ):
+                        retryable_failure = True
 
             drain_priority_requests = _drain_priority_requests
             drain_priority_requests()
@@ -414,19 +471,26 @@ def main() -> None:
                 upload_max_wait_seconds=upload_timeout_seconds,
                 cleanup_after_upload=not args.no_cleanup,
                 trim_silence=trim_silence,
-                preserve_original_video_title=args.preserve_original_video_title or src.preserve_original_video_title,
+                preserve_original_video_title=args.preserve_original_video_title or (src.preserve_original_video_title if coordinator is None else False),
                 tab=src.tab,
                 shorts_only=args.shorts_only,
                 create_album_playlists=src.create_album_playlists,
                 video_channel_url=src.video_channel_url,
                 separator=shared_separator,
                 before_track=drain_priority_requests,
+                coordinator=coordinator,
             )
             _print_pipeline_report(report)
+            if any(track.status in RETRYABLE_PIPELINE_FAILURE_STATUSES for track in report.tracks):
+                retryable_failure = True
             if drain_priority_requests is not None:
                 drain_priority_requests()
+        if coordinator is not None and coordinator.failed_sources:
+            retryable_failure = True
     finally:
         history.close()
+    if retryable_failure:
+        _fail(RETRYABLE_PIPELINE_FAILURE_ERROR)
 
 
 if __name__ == "__main__":

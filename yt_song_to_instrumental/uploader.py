@@ -9,17 +9,21 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from yt_song_to_instrumental.constants import (
-    PLAYLIST_UNSORTED_ERROR,
+    PLAYLIST_ORDER_DEFERRED_LOG,
+    PLAYLIST_METADATA_DEFERRED_LOG,
     PLAYLIST_PAGE_SIZE,
-    PLAYLIST_UNKNOWN_ORDER_ERROR,
+    PLAYLIST_INVALID_RESPONSE_ERROR,
+    PLAYLIST_MANUAL_SORT_REQUIRED,
     RETRYABLE_UPLOAD_REASONS,
     UPLOAD_CHUNK_SIZE_BYTES,
+    UPLOAD_COMPLETED_LOG,
     UPLOAD_RETRY_BACKOFF_SCHEDULE_SECONDS,
     YOUTUBE_CATEGORY_MUSIC,
     YOUTUBE_SCOPE,
     YOUTUBE_UPLOAD_SCOPE,
 )
 
+from yt_song_to_instrumental.upload_recovery import recovered_attempt
 from yt_song_to_instrumental.youtube_quota import QuotaLedger, metered_request_builder, quota_path
 
 logger = logging.getLogger(__name__)
@@ -83,13 +87,17 @@ def _do_single_upload_attempt(service, body: dict, file_path: Path, title: str) 
         resumable=True,
     )
     request = service.videos().insert(part="snippet,status", body=body, media_body=media)
+    recovered = recovered_attempt(service, request, file_path, body)
+    if recovered is not None:
+        logger.info(UPLOAD_COMPLETED_LOG, title, recovered)
+        return recovered
     response = None
     while response is None:
         status, response = request.next_chunk()
         if status:
             logger.info("Upload progress: %d%%", int(status.progress() * 100))
     video_id = response["id"]
-    logger.info("Upload complete: %s (ID: %s)", title, video_id)
+    logger.info(UPLOAD_COMPLETED_LOG, title, video_id)
     return video_id
 
 
@@ -176,9 +184,9 @@ def add_video_to_playlist(
 ) -> None:
     """Read all pages before writing; never fall back to blind append on errors.
 
-    Positioned insertion preserves canonical order on sorted playlists regardless
-    of upload timing. Existing inversions require the separate repair campaign.
-    Unknown existing items block insertion rather than inventing a release date.
+    Positioned insertion preserves canonical order on sorted playlists. Existing
+    inversions or missing metadata must not block new membership; the separate
+    repair campaign can restore the full order later.
     """
     items = []
     page_token = None
@@ -187,6 +195,8 @@ def add_video_to_playlist(
             playlistId=playlist_id, part="snippet", maxResults=PLAYLIST_PAGE_SIZE,
             pageToken=page_token,
         ).execute()
+        if not isinstance(response["items"], list):
+            raise ValueError(PLAYLIST_INVALID_RESPONSE_ERROR)
         items.extend(response["items"])
         page_token = response.get("nextPageToken")
         if not page_token:
@@ -197,14 +207,15 @@ def add_video_to_playlist(
     position = len(video_ids)
     if ranks is not None and video_ids:
         if video_id not in ranks or any(existing not in ranks and existing not in (anchors or set()) for existing in video_ids):
-            raise ValueError(PLAYLIST_UNKNOWN_ORDER_ERROR)
+            logger.warning(PLAYLIST_METADATA_DEFERRED_LOG, playlist_id)
         existing_ranks = [ranks[existing] for existing in video_ids if existing in ranks]
         if existing_ranks != sorted(existing_ranks):
-            raise ValueError(PLAYLIST_UNSORTED_ERROR)
-        position = next(
-            (index for index, existing in enumerate(video_ids) if existing in ranks and ranks[existing] > ranks[video_id]),
-            len(video_ids),
-        )
+            logger.warning(PLAYLIST_ORDER_DEFERRED_LOG, playlist_id)
+        if video_id in ranks:
+            position = next(
+                (index for index, existing in enumerate(video_ids) if existing in ranks and ranks[existing] > ranks[video_id]),
+                len(video_ids),
+            )
     body = {
         "snippet": {
             "playlistId": playlist_id,
@@ -212,5 +223,13 @@ def add_video_to_playlist(
             "resourceId": {"kind": "youtube#video", "videoId": video_id},
         },
     }
-    service.playlistItems().insert(part="snippet", body=body).execute()
+    try:
+        service.playlistItems().insert(part="snippet", body=body).execute()
+    except HttpError as error:
+        if _extract_error_reason(error) != PLAYLIST_MANUAL_SORT_REQUIRED:
+            raise
+        # This rejection confirms that no item was inserted. Respect the
+        # playlist's automatic sorting rather than blocking membership.
+        body["snippet"].pop("position")
+        service.playlistItems().insert(part="snippet", body=body).execute()
     logger.info("Added video %s to playlist %s", video_id, playlist_id)

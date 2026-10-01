@@ -11,6 +11,7 @@
 - Tests live in `tests/`
 
 ## Rules
+0. NEVER save system specific informtion e.g. pi5, intel 7, Mac Pro M5. Keep all of the repository universal.
 1. No hardcoded values. All literals go in `yt_song_to_instrumental/constants.py` and are imported.
 2. No default values in `.get()` calls (e.g., `config.get("key", "default")` is forbidden).
 3. Always import at top of module. EXCEPTION: `yt_song_to_instrumental/separator/__init__.py` uses lazy imports for ML backends because they pull in multi-GB dependencies.
@@ -24,12 +25,14 @@
 11. Do not use public artists or company names in the tests or anywhere in the non gitignored parts of the project.
 12. Add requested songs with `enqueue_priority_request()` or `--enqueue-priority`; never start a second pipeline alongside `yt-instrumental.service`. After enqueueing a user-requested song, restart the user service with `systemctl --user restart --no-block yt-instrumental.service` so the updated worker claims it immediately, then verify the request is claimed from the service output.
 13. Priority requests persist in the `priority_requests` table and must run through the normal pipeline so `downloads`, `separations`, `uploads`, and playlists remain authoritative.
-14. A priority request may take the next safe slot between tracks, but must never interrupt separation, rendering, or upload in progress.
+14. Prefer restarting between tracks. Inspect active stages before necessary restarts, preserve completed records, and verify recovery. Interrupted work must remain retryable. Reconcile potentially completed external uploads before retrying, and never start a second pipeline.
 15. Preserve crash and power-loss recovery: commit a stage to SQLite only after its durable output is complete, leave incomplete normal stages eligible for retry, and requeue priority requests left in `processing` when the next worker starts.
 16. Add recovery tests whenever changing stage persistence, priority claim/completion behavior, or shutdown handling.
 17. Code changes are not complete until the full local test suite passes and the corresponding GitHub Actions CI run finishes successfully. Never treat local tests alone as final verification.
 18. This is a public repository. Never commit credentials, tokens, `.env`, `label.yml`, database/media artifacts, or artist/label-specific names and configuration. Keep tests, fixtures, docs, branch names, commit messages, and PR text generic.
 19. Priority requests may require a Short and a per-request Short content offset. Preserve instrumental-before-Short ordering, synchronized audio/video offsets, and completion only after every requested upload is durably recorded.
+20. Use generic branches, commits, and content; exclude private deployment details.
+21. Never leave pull requests unmerged or even worse, unersolved.
 
 ## Daily maintenance
 - Check the user service and timer, recent failures, SQLite queue/stage state, disk/memory headroom, and whether work is making progress.
@@ -51,11 +54,39 @@
 ## Model memory requirements
 When adding a new separation model backend, document its requirements here AND in README.md:
 
-| Model | Min RAM | GPU Required | GPU VRAM | Notes |
+| Model | RAM guidance | GPU Required | GPU VRAM | Notes |
 |-------|---------|-------------|----------|-------|
 | HTDemucs | 4 GB | No (but recommended) | 2 GB+ | 4-stem demucs v4. Measured ~7x realtime on Pi 4 (4 GB). |
 | Inst_HQ_4 | 3 GB | No (but recommended) | 1 GB+ | UVR-MDX-NET via ONNX (audio-separator). 2-stem vocals/instrumental. Cleaner vocal removal than HTDemucs but ~12x realtime on Pi 4 — best on x86/GPU. |
+| MelBand RoFormer INSTV7N | Observed worker peak ~3.5 GiB; system minimum unverified | MPS required | Shared system memory | `mel_gabox_instv7n`: native FP16 with protected FP32 parameters, overlap 4, model-default segments, two CPU threads. |
+
+The MPS backend requires audio-separator 0.47.0, torch 2.14.0 and demucs 4.1.0
+in a separate environment; the legacy CPU extras/lockfile are incompatible.
+Keep development `.venv` independent of the MPS worker environment because
+`uv run` synchronizes `.venv` against the CPU lockfile.
+`AUDIO_SEPARATOR_MODEL_DIR` can select the persistent
+checkpoint cache. A change of default model must preserve source-level upload
+deduplication and historical model associations for remaining Shorts.
+
+INSTV7N measurements: a running worker reported ~3.5 GiB peak physical
+footprint; two full-song runs reported ~2.03 GiB peak RSS each and
+2.62–3.62 GiB sampled MPS driver maxima (0.5-second sampling). These counters
+overlap; never sum them or treat them as minimum system RAM. The 8 GB budget
+remains an estimate, and 8 GB system compatibility is unverified. Keep one
+worker with batch size 1, allow headroom for the OS and subprocesses, and
+preserve measurement scope and caveats from README.md.
 
 ## CI & Test dependencies
 - When running tests in CI (`.github/workflows/ci.yml`) or in fresh environments, install dependencies with `uv sync --extra dev --extra all-models` (or `uv sync --all-extras`).
 - `tests/test_separator.py` imports separator backend modules directly (e.g. `inst_hq_4_backend.py`), which loads `audio_separator` requiring `onnxruntime` at import time. Omitting `onnxruntime` will cause CI test collection to fail with `ModuleNotFoundError: No module named 'onnxruntime'`.
+
+## Managed macOS runtime
+- Runtime, control, installation and upload recovery code belongs in the package.
+- Use the private JSON deployment config with `python -m yt_song_to_instrumental.runtime_control`.
+- On macOS, enqueue priority requests normally, then request `run-now`; do not invoke systemctl or start another pipeline.
+- Preserve the existing runtime directory and shared worker-lock path during migration. Inspect stages before stopping; `install` refuses an active worker and pauses admission.
+- Never synchronize the MPS environment with the development lockfile. Provision it with `scripts/install-mac-worker.sh` only while the worker is stopped.
+- A LaunchAgent requires login; boot-time daemon installation requires administrator privileges and an ordinary configured UserName. Verify MPS after logout before claiming unattended logout support.
+
+- Managed runs must refresh all configured sources before upload admission and reselect fresh work; never drain a stale per-source snapshot for hours before scanning the next artist.
+- Releases within the configured recent_upload_window_days (default 30 UTC calendar days) upload consecutively through the single worker; older/unknown dates retain paced uploads. Preserve quota checks and instrumental-before-Short ordering.

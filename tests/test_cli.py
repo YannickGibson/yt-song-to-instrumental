@@ -5,6 +5,7 @@ import pytest
 
 from yt_song_to_instrumental.cli import _print_pipeline_report, main
 from yt_song_to_instrumental.config import LabelConfig, Source
+from yt_song_to_instrumental.constants import RETRYABLE_PIPELINE_FAILURE_STATUSES
 from yt_song_to_instrumental.history import PriorityRequest
 from yt_song_to_instrumental.pipeline import PipelineReport, TrackReport
 from yt_song_to_instrumental.preview import PreviewReport
@@ -44,6 +45,26 @@ class TestListModels:
 
 
 class TestArgParsing:
+    def test_playlist_retry_never_starts_media_pipeline(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["yt-instrumental", "--retry-playlists"])
+        monkeypatch.setattr("yt_song_to_instrumental.cli.AppConfig", MagicMock())
+        monkeypatch.setattr("yt_song_to_instrumental.cli._load_label_config_or_exit", MagicMock())
+        monkeypatch.setattr("yt_song_to_instrumental.cli._youtube_config_or_exit", MagicMock())
+        monkeypatch.setattr("yt_song_to_instrumental.cli.authenticate", MagicMock())
+        history = MagicMock()
+        monkeypatch.setattr("yt_song_to_instrumental.cli.HistoryDB", MagicMock(return_value=history))
+        seed = MagicMock()
+        retry = MagicMock()
+        pipeline = MagicMock()
+        monkeypatch.setattr("yt_song_to_instrumental.cli.queue_unassigned_shorts", seed)
+        monkeypatch.setattr("yt_song_to_instrumental.cli.retry_playlist_assignments", retry)
+        monkeypatch.setattr("yt_song_to_instrumental.cli.process_url", pipeline)
+        main()
+        seed.assert_called_once_with(history)
+        retry.assert_called_once()
+        history.close.assert_called_once()
+        pipeline.assert_not_called()
+
     def test_enqueue_priority_exits_without_loading_label_config(self, capsys):
         request = PriorityRequest(
             id=7,
@@ -77,6 +98,75 @@ class TestArgParsing:
         assert mock_enqueue.call_args.kwargs["short_start_seconds"] == 35.0
         mock_load_label.assert_not_called()
         assert "first in queue" in capsys.readouterr().out
+
+    def test_enqueue_priority_with_short_default_offset(self, capsys):
+        request = PriorityRequest(
+            id=8,
+            url="https://www.youtube.com/watch?v=QueueItem02",
+            requested_at="2026-09-05T00:00:00+00:00",
+            status="pending",
+            started_at=None,
+            finished_at=None,
+            error="",
+            upload_short=1,
+            short_start_seconds=None,
+        )
+        with patch("yt_song_to_instrumental.cli.enqueue_priority_request", return_value=request) as mock_enqueue, \
+             patch("yt_song_to_instrumental.cli.load_label_config") as mock_load_label, \
+             patch.object(
+                 sys,
+                 "argv",
+                 [
+                     "yt-instrumental",
+                     "--enqueue-priority",
+                     request.url,
+                     "--priority-short",
+                 ],
+             ):
+            main()
+
+        assert mock_enqueue.call_args.args[0] == request.url
+        assert mock_enqueue.call_args.kwargs["upload_short"] is True
+        assert mock_enqueue.call_args.kwargs["short_start_seconds"] is None
+        mock_load_label.assert_not_called()
+        out = capsys.readouterr().out
+        assert "first in queue" in out
+        assert "starting at precise half of the video" in out
+
+    def test_list_priority_formatting(self, capsys):
+        requests = [
+            PriorityRequest(
+                id=1,
+                url="https://www.youtube.com/watch?v=QueueItem01",
+                requested_at="2026-09-05T00:00:00+00:00",
+                status="pending",
+                started_at=None,
+                finished_at=None,
+                error="",
+                upload_short=1,
+                short_start_seconds=None,
+            ),
+            PriorityRequest(
+                id=2,
+                url="https://www.youtube.com/watch?v=QueueItem02",
+                requested_at="2026-09-05T00:00:01+00:00",
+                status="pending",
+                started_at=None,
+                finished_at=None,
+                error="",
+                upload_short=1,
+                short_start_seconds=42.0,
+            ),
+        ]
+        mock_history = MagicMock()
+        mock_history.list_priority_requests.return_value = requests
+        with patch("yt_song_to_instrumental.cli.HistoryDB", return_value=mock_history), \
+             patch.object(sys, "argv", ["yt-instrumental", "--list-priority"]):
+            main()
+
+        out = capsys.readouterr().out
+        assert "#1 [pending] https://www.youtube.com/watch?v=QueueItem01 [Short at video midpoint]" in out
+        assert "#2 [pending] https://www.youtube.com/watch?v=QueueItem02 [Short at 42s]" in out
 
     def test_url_required_when_no_sources(self):
         cfg = _make_label_config(sources=[])
@@ -241,6 +331,58 @@ class TestModelPrecedence:
             mock_process.return_value = PipelineReport()
             main()
         assert mock_process.call_args.kwargs["model_name"] == "htdemucs"
+
+
+class TestPipelineExitStatus:
+    @pytest.mark.parametrize("status", RETRYABLE_PIPELINE_FAILURE_STATUSES)
+    def test_retryable_stage_failure_exits_nonzero_after_other_sources(self, status):
+        cfg = _make_label_config(sources=[
+            Source(url="https://yt.com/a", after_date=None),
+            Source(url="https://yt.com/b", after_date=None),
+        ])
+        failed = PipelineReport(failed=1, tracks=[
+            TrackReport("source-a", "Track", "Example Artist", status),
+        ])
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url", side_effect=[failed, PipelineReport()]) as process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB") as history, \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload"]):
+            with pytest.raises(SystemExit) as error:
+                main()
+        assert error.value.code != 0
+        assert process.call_count == 2
+        history.return_value.close.assert_called_once()
+
+    def test_failed_quality_check_is_terminal_for_this_run(self):
+        cfg = _make_label_config(sources=[Source(url="https://yt.com/a", after_date=None)])
+        qa_failed = PipelineReport(failed=1, tracks=[
+            TrackReport("source-a", "Track", "Example Artist", "qa_failed"),
+        ])
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli.process_url", return_value=qa_failed), \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental", "--skip-upload"]):
+            main()
+
+    def test_retryable_priority_failure_exits_nonzero(self):
+        cfg = _make_label_config(sources=[Source(url="https://yt.com/a", after_date=None)])
+        failed = PipelineReport(failed=1, tracks=[
+            TrackReport("source-a", "Track", "Example Artist", "separation_failed"),
+        ])
+        with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
+             patch("yt_song_to_instrumental.cli._youtube_config_or_exit"), \
+             patch("yt_song_to_instrumental.cli.SourceCoordinator") as coordinator, \
+             patch("yt_song_to_instrumental.cli.authenticate"), \
+             patch("yt_song_to_instrumental.separator.get_separator"), \
+             patch("yt_song_to_instrumental.cli.process_priority_requests", side_effect=[[(1, failed)], []]), \
+             patch("yt_song_to_instrumental.cli.process_url", return_value=PipelineReport()) as process, \
+             patch("yt_song_to_instrumental.cli.HistoryDB"), \
+             patch.object(sys, "argv", ["yt-instrumental"]):
+            coordinator.return_value.failed_sources = set()
+            with pytest.raises(SystemExit) as error:
+                main()
+        assert error.value.code != 0
+        process.assert_called_once()
 
 
 class TestTrimPrecedence:

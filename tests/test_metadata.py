@@ -491,3 +491,12 @@ class TestValidateTemplateTags:
         # closing-tag form "</foo>" or "<Foo>" don't look like template tags
         # and so don't trigger the check.
         validate_template_tags("</closing> <CamelCase>", "templates.test")
+
+
+def test_short_title_appends_explicit_artist_and_keeps_suffix_when_truncated():
+    from yt_song_to_instrumental.metadata import render_short_title
+    title = render_short_title("Example Artist — Song (Instrumental)", artist_name="Example Artist")
+    assert title == "Song (Instrumental Teaser) [Example Artist]"
+    long_title = render_short_title("x" * 200, artist_name="Example Artist")
+    assert len(long_title) <= 100
+    assert long_title.endswith(" [Example Artist]")

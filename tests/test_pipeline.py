@@ -1,6 +1,8 @@
+import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from yt_song_to_instrumental.audio_alignment import ShortAlignment
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.history import HistoryDB
 from yt_song_to_instrumental.pipeline import (
@@ -172,6 +174,21 @@ class TestSingleVideoTargeting:
 
 
 class TestShortsProcessing:
+    @pytest.fixture(autouse=True)
+    def matching_original_audio(self, tmp_path):
+        original = tmp_path / "original.wav"
+        original.touch()
+        with (
+            patch("yt_song_to_instrumental.pipeline.download_track_audio", return_value=original),
+            patch("yt_song_to_instrumental.pipeline._get_duration", return_value=200.0),
+            patch("yt_song_to_instrumental.pipeline.align_short_audio") as align,
+        ):
+            align.side_effect = lambda *args, **kwargs: ShortAlignment(
+                kwargs["audio_start_seconds"] + kwargs["trim_start_seconds"],
+                kwargs["audio_start_seconds"], 0.98, 0.95, 0.5,
+            )
+            yield align
+
     @patch("yt_song_to_instrumental.pipeline.upload_video", return_value="short-id")
     @patch("yt_song_to_instrumental.pipeline.render_description", return_value="description")
     @patch("yt_song_to_instrumental.pipeline.render_short_video")
@@ -240,9 +257,163 @@ class TestShortsProcessing:
             PipelineReport(),
         )
 
+        assert mock_detect.call_args_list[0].kwargs["video_title"] == "Example Artist - Track (Official Video)"
+        assert mock_upload.call_args.args[2].endswith(" [Sample Artist]")
         assert mock_detect.call_args.kwargs["start_time"] == 37.5
         assert mock_render_short.call_args.kwargs["start_time"] == 37.5
         assert mock_render_short.call_args.kwargs["audio_start_time"] == 35.0
+        history.record_short_upload.assert_called_once()
+
+    @patch("yt_song_to_instrumental.pipeline._get_duration", return_value=200.0)
+    @patch("yt_song_to_instrumental.pipeline.upload_video", return_value="short-id")
+    @patch("yt_song_to_instrumental.pipeline.render_description", return_value="description")
+    @patch("yt_song_to_instrumental.pipeline.render_short_video")
+    @patch(
+        "yt_song_to_instrumental.pipeline.detect_if_music_video",
+        return_value=(True, 25.0),
+    )
+    @patch("yt_song_to_instrumental.pipeline.download_source_video")
+    def test_short_defaults_to_ten_percent_of_video(
+        self,
+        mock_download_source,
+        mock_detect,
+        mock_render_short,
+        mock_render_description,
+        mock_upload,
+        mock_duration,
+        tmp_path,
+    ):
+        source_video = tmp_path / "source.mp4"
+        source_video.touch()
+        instrumental = tmp_path / "instrumental.wav"
+        instrumental.touch()
+        mock_download_source.return_value = source_video
+        history = MagicMock()
+        history.is_short_uploaded.return_value = False
+        history.get_separation_record.return_value = MagicMock(
+            instrumental_path=str(instrumental),
+            quality_passed=True,
+            trim_start_seconds=0.0,
+        )
+        label_config = _make_label_config()
+        label_config.upload_short = True
+        ctx = _RunContext(
+            service=MagicMock(),
+            history=history,
+            label_config=label_config,
+            separator=MagicMock(),
+            model="htdemucs",
+            display_name="HTDemucs",
+            privacy="unlisted",
+            tmp_dir=tmp_path,
+            output_dir=tmp_path,
+            upload_max_wait_seconds=None,
+            cleanup_after_upload=False,
+            trim_silence=False,
+            trim_silence_threshold_db=-35.0,
+            preserve_original_video_title=False,
+            force_short=False,
+            short_start_seconds=None,
+        )
+        track = MagicMock(
+            video_id="source-id",
+            title="Sample Song (Official Music Video)",
+            url="https://www.youtube.com/watch?v=sourcevideo",
+            channel_name="Sample Artist",
+            channel_url="https://www.youtube.com/@sample-artist",
+        )
+
+        _upload_short_track(
+            track,
+            "Sample Artist",
+            "Sample Album",
+            "instrumental-id",
+            0.0,
+            ctx,
+            PipelineReport(),
+        )
+
+        assert mock_render_short.call_args.kwargs["start_time"] == 20.0
+        assert mock_render_short.call_args.kwargs["audio_start_time"] == 20.0
+        assert mock_render_short.call_args.kwargs["duration"] == 20.0
+        history.record_short_upload.assert_called_once()
+
+    @patch("yt_song_to_instrumental.pipeline._get_duration", return_value=200.0)
+    @patch("yt_song_to_instrumental.pipeline.upload_video", return_value="short-id")
+    @patch("yt_song_to_instrumental.pipeline.render_description", return_value="description")
+    @patch("yt_song_to_instrumental.pipeline.render_short_video")
+    @patch(
+        "yt_song_to_instrumental.pipeline.detect_if_music_video",
+        return_value=(True, 25.0),
+    )
+    @patch("yt_song_to_instrumental.pipeline.download_source_video")
+    def test_short_defaults_to_ten_percent_with_silence_trimming(
+        self,
+        mock_download_source,
+        mock_detect,
+        mock_render_short,
+        mock_render_description,
+        mock_upload,
+        mock_duration,
+        tmp_path,
+    ):
+        source_video = tmp_path / "source.mp4"
+        source_video.touch()
+        instrumental = tmp_path / "instrumental.wav"
+        instrumental.touch()
+        mock_download_source.return_value = source_video
+        history = MagicMock()
+        history.is_short_uploaded.return_value = False
+        history.get_separation_record.return_value = MagicMock(
+            instrumental_path=str(instrumental),
+            quality_passed=True,
+            trim_start_seconds=4.0,
+        )
+        label_config = _make_label_config()
+        label_config.upload_short = False
+        label_config.upload_short_if_music_video = True
+        ctx = _RunContext(
+            service=MagicMock(),
+            history=history,
+            label_config=label_config,
+            separator=MagicMock(),
+            model="htdemucs",
+            display_name="HTDemucs",
+            privacy="unlisted",
+            tmp_dir=tmp_path,
+            output_dir=tmp_path,
+            upload_max_wait_seconds=None,
+            cleanup_after_upload=False,
+            trim_silence=False,
+            trim_silence_threshold_db=-35.0,
+            preserve_original_video_title=False,
+            force_short=False,
+            short_start_seconds=None,
+        )
+        track = MagicMock(
+            video_id="source-id",
+            title="Sample Song (Official Music Video)",
+            url="https://www.youtube.com/watch?v=sourcevideo",
+            channel_name="Sample Artist",
+            channel_url="https://www.youtube.com/@sample-artist",
+        )
+
+        _upload_short_track(
+            track,
+            "Sample Artist",
+            "Sample Album",
+            "instrumental-id",
+            4.0,
+            ctx,
+            PipelineReport(),
+        )
+
+        # Ten percent of 200.0s video is 20.0s
+        assert mock_detect.call_args.kwargs["start_time"] == 20.0
+        assert mock_render_short.call_args.kwargs["start_time"] == 20.0
+        # Audio offset is 20.0 - 4.0 = 16.0s (synced with video)
+        assert mock_render_short.call_args.kwargs["audio_start_time"] == 16.0
+        assert mock_render_short.call_args.kwargs["duration"] == 20.0
         history.record_short_upload.assert_called_once()
 
     @patch("yt_song_to_instrumental.pipeline.cleanup_track_artifacts")
@@ -253,6 +424,9 @@ class TestShortsProcessing:
         history.is_uploaded.return_value = True
         history.get_upload_record.return_value = MagicMock(
             youtube_upload_id="existing-upload"
+        )
+        history.get_existing_upload.return_value = MagicMock(
+            model="htdemucs", youtube_upload_id="existing-upload"
         )
         label_config = _make_label_config()
         ctx = _RunContext(
@@ -285,7 +459,7 @@ class TestShortsProcessing:
     @patch("yt_song_to_instrumental.pipeline.render_description", return_value="description")
     @patch("yt_song_to_instrumental.pipeline.render_short_video")
     @patch("yt_song_to_instrumental.pipeline.find_and_verify_music_video")
-    @patch("yt_song_to_instrumental.pipeline.detect_if_music_video", return_value=(False, 0.1))
+    @patch("yt_song_to_instrumental.pipeline.detect_if_music_video", side_effect=[(False, 0.1), (True, 25.0)])
     @patch("yt_song_to_instrumental.pipeline.download_source_video")
     def test_short_original_link_uses_verified_alternate_music_video(
         self,
@@ -395,7 +569,7 @@ class TestShortsProcessing:
 
 
 class TestSortTracksForPlaylistInsertion:
-    def test_orders_newest_releases_and_preserves_album_track_order(self):
+    def test_orders_uploads_and_preserves_final_album_track_order(self):
         from yt_song_to_instrumental.history import DownloadRecord
         from yt_song_to_instrumental.pipeline import sort_tracks_for_playlist_insertion
 
@@ -440,9 +614,53 @@ class TestSortTracksForPlaylistInsertion:
 
         assert [t.video_id for t in insertion_order] == ["new", "old"]
 
+    def test_multi_artist_tracks_in_album_stay_grouped(self):
+        from yt_song_to_instrumental.history import DownloadRecord
+        from yt_song_to_instrumental.pipeline import sort_tracks_for_playlist_insertion
+
+        tracks = [
+            DownloadRecord(
+                "t1", "url", "Track One", "Artist A & Collaborator B", "Shared Album",
+                "Chan", "CUrl", "2026-09-01T10:00:00", "p", "t",
+            ),
+            DownloadRecord(
+                "t2", "url", "Track Two", "Artist A", "Shared Album",
+                "Chan", "CUrl", "2026-09-01T10:00:01", "p", "t",
+            ),
+            DownloadRecord(
+                "t3", "url", "Track Three", "Artist A feat. Collaborator C", "Shared Album",
+                "Chan", "CUrl", "2026-09-01T10:00:02", "p", "t",
+            ),
+        ]
+
+        ordered = sort_tracks_for_playlist_insertion(tracks)
+        assert [t.video_id for t in ordered] == ["t1", "t2", "t3"]
+
 
 class TestSelectTracks:
-    def test_newer_short_backfill_precedes_old_long_form_upload(self):
+    @pytest.mark.parametrize("short_status", [
+        "uploaded", "skipped_not_music_video", "skipped_disabled",
+        "withdrawn_non_music_video", "withdrawn_source_mismatch",
+        "deleted_owner_safety", "private_rejected_source",
+    ])
+    def test_model_switch_preserves_completed_or_skipped_historical_shorts(self, short_status):
+        db = HistoryDB(":memory:")
+        db.record_download("PastTrack01", "url", "Past Track", "Example Artist", "", "Channel", "channel-url", "old.wav", "old.jpg")
+        db.record_upload("PastTrack01", "htdemucs", "Existing001", "public")
+        db.record_short_status("PastTrack01", "htdemucs", short_status)
+
+        assert _select_tracks(db, "new-model", False, shorts_enabled=True) == []
+
+    def test_local_only_separation_can_still_compare_new_model(self):
+        db = HistoryDB(":memory:")
+        db.record_download("PastTrack01", "url", "Past Track", "Example Artist", "", "Channel", "channel-url", "old.wav", "old.jpg")
+        db.record_upload("PastTrack01", "htdemucs", "Existing001", "public")
+
+        selected = _select_tracks(db, "new-model", skip_upload=True)
+
+        assert [track.video_id for track in selected] == ["PastTrack01"]
+
+    def test_long_form_upload_precedes_short_backfill(self):
         db = HistoryDB(":memory:")
         db.record_download(
             "OldUpload01", "url", "Old Upload", "Example Artist", "", "Channel",
@@ -461,4 +679,13 @@ class TestSelectTracks:
             shorts_enabled=True,
         )
 
-        assert [track.video_id for track in selected] == ["NewShort01", "OldUpload01"]
+        assert [track.video_id for track in selected] == ["OldUpload01", "NewShort01"]
+
+
+@pytest.fixture(autouse=True)
+def source_title_metadata():
+    with (
+        patch("yt_song_to_instrumental.pipeline.get_source_video_title", return_value="Example Artist - Track (Official Video)") as fetch,
+        patch("yt_song_to_instrumental.pipeline.is_trusted_music_video", return_value=True),
+    ):
+        yield fetch

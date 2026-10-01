@@ -5,9 +5,14 @@ from pathlib import Path
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.constants import (
     PRIORITY_ERROR_NO_TRACK,
+    RETRYABLE_PIPELINE_FAILURE_STATUSES,
+    PRIORITY_RETRYABLE_FAILURE,
     PRIORITY_ERROR_REPORT_PREFIX,
     PRIORITY_ERROR_REQUESTED_OUTPUTS,
+    PRIORITY_ERROR_SHORT_START_NEGATIVE,
+    PRIORITY_ERROR_SHORT_START_REQUIRES_SHORT,
     PRIORITY_DEFAULT_SHORT_START_SECONDS,
+    PRIORITY_MIN_SHORT_START_SECONDS,
     PRIORITY_SUCCESS_TRACK_STATUSES,
     YOUTUBE_CANONICAL_VIDEO_URL,
     YOUTUBE_VIDEO_ID_PATTERN,
@@ -15,6 +20,7 @@ from yt_song_to_instrumental.constants import (
 from yt_song_to_instrumental.history import HistoryDB, PriorityRequest
 from yt_song_to_instrumental.pipeline import (
     PipelineReport,
+    TrackReport,
     _extract_target_video_ids,
     _is_single_video_url,
     process_url,
@@ -29,13 +35,16 @@ def enqueue_priority_request(
     db_path: str | Path | None = None,
     *,
     upload_short: bool = False,
-    short_start_seconds: float = PRIORITY_DEFAULT_SHORT_START_SECONDS,
+    short_start_seconds: float | None = PRIORITY_DEFAULT_SHORT_START_SECONDS,
 ) -> PriorityRequest:
     """Put one YouTube video at the front of the instrumental request queue."""
-    if short_start_seconds < PRIORITY_DEFAULT_SHORT_START_SECONDS:
-        raise ValueError("Short start time must be zero or greater")
-    if short_start_seconds and not upload_short:
-        raise ValueError("A Short start time requires upload_short=True")
+    if (
+        short_start_seconds is not None
+        and short_start_seconds < PRIORITY_MIN_SHORT_START_SECONDS
+    ):
+        raise ValueError(PRIORITY_ERROR_SHORT_START_NEGATIVE)
+    if short_start_seconds is not None and not upload_short:
+        raise ValueError(PRIORITY_ERROR_SHORT_START_REQUIRES_SHORT)
     normalized_url = _normalize_video_url(url)
     history = HistoryDB(db_path)
     try:
@@ -60,6 +69,7 @@ def process_priority_requests(
     upload_max_wait_seconds: float | None,
     cleanup_after_upload: bool,
     trim_silence: bool,
+    coordinator=None,
 ) -> list[tuple[PriorityRequest, PipelineReport]]:
     """Drain priority requests newest-first through the normal pipeline."""
     results: list[tuple[PriorityRequest, PipelineReport]] = []
@@ -81,10 +91,15 @@ def process_priority_requests(
                 trim_silence=trim_silence,
                 force_short=bool(request.upload_short),
                 short_start_seconds=request.short_start_seconds,
+                coordinator=coordinator,
+                priority_request=True,
             )
         except Exception as exc:
-            history.fail_priority_request(request.id, str(exc))
+            history.fail_priority_request(request.id, str(exc), retryable=True)
             logger.exception("Priority request #%d failed", request.id)
+            results.append((request, PipelineReport(failed=1, tracks=[
+                TrackReport(request.url, str(), str(), PRIORITY_RETRYABLE_FAILURE),
+            ])))
             continue
 
         results.append((request, report))
@@ -99,7 +114,8 @@ def process_priority_requests(
             if request.upload_short and report.failed == 0
             else _report_failure_reason(report)
         )
-        history.fail_priority_request(request.id, reason)
+        retryable = any(track.status in RETRYABLE_PIPELINE_FAILURE_STATUSES for track in report.tracks)
+        history.fail_priority_request(request.id, reason, retryable=retryable)
         logger.error("Priority request #%d failed: %s", request.id, reason)
 
     return results
@@ -111,6 +127,17 @@ def _requested_outputs_complete(
     history: HistoryDB,
     model_name: str,
 ) -> bool:
+    video_ids = _extract_target_video_ids(request.url)
+    existing_upload = None
+    if video_ids is not None and len(video_ids) == 1:
+        existing_upload = history.get_existing_upload(next(iter(video_ids)))
+    if existing_upload is not None:
+        # A model switch may leave no selected work for an already-published
+        # request. The durable original uploads remain authoritative.
+        return not request.upload_short or history.is_short_uploaded(
+            existing_upload.video_id, existing_upload.model
+        )
+
     pipeline_succeeded = any(
         track.status in PRIORITY_SUCCESS_TRACK_STATUSES for track in report.tracks
     )
@@ -119,7 +146,6 @@ def _requested_outputs_complete(
     if not request.upload_short:
         return True
 
-    video_ids = _extract_target_video_ids(request.url)
     if video_ids is None or len(video_ids) != 1:
         return False
     video_id = next(iter(video_ids))
