@@ -11,6 +11,9 @@ from yt_song_to_instrumental.cleanup import cleanup_track_artifacts
 from yt_song_to_instrumental.config import AppConfig, LabelConfig
 from yt_song_to_instrumental.constants import (
     MODEL_DISPLAY_NAMES,
+    SOURCE_DEFERRED_LOG,
+    SOURCE_FIRST_INDEX,
+    RECENT_UPLOAD_LOG,
     PLAYLIST_RETRY_BATCH_SIZE,
     PLAYLIST_RECOVERY_BATCH_SIZE,
     SHORT_ALIGNMENT_AUDIO_SUFFIX,
@@ -43,7 +46,7 @@ from yt_song_to_instrumental.quality import _get_duration, check_quality
 from yt_song_to_instrumental.separator import get_separator
 from yt_song_to_instrumental.separator.base import SeparatorBackend
 from yt_song_to_instrumental.thumbnail import get_thumbnail_for_track
-from yt_song_to_instrumental.upload_pacing import wait_for_upload_slot
+from yt_song_to_instrumental.upload_pacing import UploadDeferred, is_recent_release, wait_for_upload_slot
 from yt_song_to_instrumental.uploader import upload_video
 from yt_song_to_instrumental.upload_recovery import upload_journal
 from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title
@@ -101,6 +104,8 @@ class _RunContext:
     shorts_only: bool = False
     force_short: bool = False
     short_start_seconds: float | None = None
+    coordinator: Any = None
+    priority_request: bool = False
 
 
 def process_url(
@@ -129,6 +134,8 @@ def process_url(
     before_track: Callable[[], None] | None = None,
     force_short: bool = False,
     short_start_seconds: float | None = None,
+    coordinator: Any = None,
+    priority_request: bool = False,
 ) -> PipelineReport:
     report = PipelineReport()
     model = model_name or config.separator_model
@@ -156,6 +163,8 @@ def process_url(
         shorts_only=shorts_only,
         force_short=force_short,
         short_start_seconds=short_start_seconds,
+        coordinator=coordinator,
+        priority_request=priority_request,
     )
 
     if not skip_upload:
@@ -168,7 +177,7 @@ def process_url(
     if _is_single_video_url(url):
         target_ids = _extract_target_video_ids(url)
 
-    if not skip_download:
+    if not skip_download and (coordinator is None or priority_request):
         logger.info("Downloading tracks from %s", url)
         downloaded = download_tracks(url, history, ctx.tmp_dir, after_date=after_date, tab=tab)
         report.downloaded = len(downloaded)
@@ -181,7 +190,8 @@ def process_url(
         or label_config.upload_short_if_music_video
         or force_short
     )
-    for track in _select_tracks(
+    base_ctx = ctx
+    for track in _tracks_for_run(
         history,
         model,
         skip_upload,
@@ -189,7 +199,16 @@ def process_url(
         shorts_enabled=shorts_enabled,
         shorts_only=shorts_only,
         force_short=force_short,
+        coordinator=coordinator if not priority_request else None,
     ):
+        if coordinator is not None and not priority_request:
+            coordinator.attempted.add(track.video_id)
+            source = coordinator.source_for(track)
+            ctx = replace(base_ctx,
+                preserve_original_video_title=base_ctx.preserve_original_video_title or source.preserve_original_video_title,
+                create_album_playlists=source.create_album_playlists,
+                video_channel_url=source.video_channel_url,
+            )
         if not skip_upload:
             retry_playlist_assignments(service, history, label_config)
             if not history.pending_playlist_assignments(PLAYLIST_RETRY_BATCH_SIZE):
@@ -208,11 +227,40 @@ def process_url(
             report.tracks.append(TrackReport(track.video_id, track.title, artist, "skipped_upload"))
             continue
 
-        _upload_track(track, artist, album, ctx, report)
+        try:
+            _upload_track(track, artist, album, ctx, report)
+        except UploadDeferred:
+            coordinator.attempted.discard(track.video_id)
+            logger.info(SOURCE_DEFERRED_LOG, track.video_id)
 
     if owns_history:
         history.close()
     return report
+
+
+def _tracks_for_run(history, model, skip_upload, *, coordinator=None, **selection):
+    if coordinator is None:
+        yield from _select_tracks(history, model, skip_upload, **selection)
+        return
+    while candidates := coordinator.candidates():
+        yield candidates[SOURCE_FIRST_INDEX]
+
+
+def _admit_upload(track, ctx):
+    check = None
+    if ctx.coordinator is not None:
+        check = lambda: ctx.coordinator.before_upload(track, ctx.priority_request)
+    if is_recent_release(track.release_date, ctx.label_config.recent_upload_window_days):
+        if check is not None:
+            check()
+        logger.info(RECENT_UPLOAD_LOG, track.video_id)
+        return
+    if check is None:
+        wait_for_upload_slot(ctx.history, ctx.label_config.upload_interval_seconds,
+                             ctx.label_config.upload_interval_jitter_seconds)
+    else:
+        wait_for_upload_slot(ctx.history, ctx.label_config.upload_interval_seconds,
+                             ctx.label_config.upload_interval_jitter_seconds, check=check)
 
 
 def _is_single_video_url(url: str) -> bool:
@@ -394,12 +442,16 @@ def _separate_track(
 def _upload_short_track(track, artist, album, long_form_yt_id, start_time, ctx, report):
     if not _shorts_enabled(ctx):
         return
+    deferred = False
     try:
         _perform_short_track(track, artist, album, long_form_yt_id, start_time, ctx, report)
+    except UploadDeferred:
+        deferred = True
+        raise
     finally:
         separation = ctx.history.get_separation_record(track.video_id, ctx.model)
         terminal_quality = separation is not None and not separation.quality_passed
-        if (not terminal_quality and not ctx.history.is_short_uploaded(track.video_id, ctx.model)
+        if (not deferred and not terminal_quality and not ctx.history.is_short_uploaded(track.video_id, ctx.model)
                 and ctx.history.get_short_status(track.video_id, ctx.model) not in SHORT_SKIPPED_STATUSES):
             report.failed += 1
             report.tracks.append(TrackReport(track.video_id, track.title, artist, SHORT_RETRYABLE_FAILURE))
@@ -680,10 +732,7 @@ def _perform_short_track(
     )
 
     try:
-        wait_for_upload_slot(
-            ctx.history, ctx.label_config.upload_interval_seconds,
-            ctx.label_config.upload_interval_jitter_seconds,
-        )
+        _admit_upload(track, ctx)
         with upload_journal(ctx.history, track.video_id, ctx.model, UPLOAD_KIND_SHORT):
             short_yt_id = upload_video(
                 ctx.service,
@@ -701,6 +750,8 @@ def _perform_short_track(
             status="uploaded",
         )
         logger.info("Successfully uploaded Short for %s (id: %s)", track.title, short_yt_id)
+    except UploadDeferred:
+        raise
     except Exception as e:
         logger.error("Short upload failed for %s: %s", track.title, e)
         ctx.history.record_short_status(
@@ -860,10 +911,7 @@ def _upload_track(
     )
 
     try:
-        wait_for_upload_slot(
-            ctx.history, ctx.label_config.upload_interval_seconds,
-            ctx.label_config.upload_interval_jitter_seconds,
-        )
+        _admit_upload(track, ctx)
         with upload_journal(ctx.history, track.video_id, ctx.model, UPLOAD_KIND_INSTRUMENTAL):
             yt_video_id = upload_video(
                 ctx.service, video_path, title, description, ctx.privacy,
@@ -907,6 +955,8 @@ def _upload_track(
                 rendered_title=title, youtube_upload_id=yt_video_id,
             )
         )
+    except UploadDeferred:
+        raise
     except Exception as e:
         logger.error("Upload failed for %s: %s", track.title, e)
         report.failed += 1

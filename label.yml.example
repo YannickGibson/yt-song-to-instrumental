@@ -65,6 +65,8 @@ upload_short_if_music_video: false
 # With 1800 seconds of bounded Gaussian jitter (10-minute standard deviation),
 # gaps stay between 90 and 150 minutes.
 # The chosen gap survives restarts. Set both values to 0 to disable pacing.
+# Upload releases from the last 30 days consecutively; set 0 to pace all.
+recent_upload_window_days: 30
 upload_interval_seconds: 7200
 upload_interval_jitter_seconds: 1800
 

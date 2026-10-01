@@ -69,6 +69,7 @@ def process_priority_requests(
     upload_max_wait_seconds: float | None,
     cleanup_after_upload: bool,
     trim_silence: bool,
+    coordinator=None,
 ) -> list[tuple[PriorityRequest, PipelineReport]]:
     """Drain priority requests newest-first through the normal pipeline."""
     results: list[tuple[PriorityRequest, PipelineReport]] = []
@@ -90,6 +91,8 @@ def process_priority_requests(
                 trim_silence=trim_silence,
                 force_short=bool(request.upload_short),
                 short_start_seconds=request.short_start_seconds,
+                coordinator=coordinator,
+                priority_request=True,
             )
         except Exception as exc:
             history.fail_priority_request(request.id, str(exc), retryable=True)

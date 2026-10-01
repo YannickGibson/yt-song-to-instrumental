@@ -377,7 +377,7 @@ integrity-checked, private, and retained for seven days by default.
 
 Set `upload_interval_seconds: 7200` and
 `upload_interval_jitter_seconds: 1800` in private `label.yml` for the two-hour
-schedule with bounded Gaussian jitter. The next slot derives from the last
+schedule with bounded Gaussian jitter for older releases. The next slot derives from the last
 durable upload timestamp, so restarts do not redraw jitter or reset pacing.
 Instrumentals precede their Shorts; requested offsets and completed stage
 records remain authoritative. Separation, render, thumbnail, upload, and
@@ -394,3 +394,26 @@ read failures leave the upload retryable without inserting another video.
 Session URLs are sensitive: keep database copies and backups private. Uploads
 made before this journal existed require inspection of the old logs and channel
 if their completion is uncertain.
+
+
+## Fresh source discovery and recent-release batches
+
+Managed runs scan every configured source before selecting work and again
+before every instrumental or Short upload. The queue is reselected after each
+scan, allowing new releases and priority requests to supersede a prepared older
+track without deleting its completed stages. During older-track pacing waits,
+source scans repeat every 15 minutes. Discovery uses the configured source URLs,
+tabs, and date cutoffs; a fixed album playlist still only discovers that playlist.
+Source memberships persist in SQLite so each track retains its own source's
+video-channel, title and album-playlist settings.
+
+`recent_upload_window_days: 30` is the default. Sources dated within the last
+30 days, inclusive by UTC calendar date, are processed consecutively with no
+upload-spacing delay, including their eligible Shorts. Instrumentals precede
+their Shorts, and explicit priority requests remain first. This is still one
+worker, and upload quotas, quality checks, source verification and durable
+upload reconciliation still apply. Unknown, invalid, future or older source
+dates use the normal paced backlog. Set the window to `0` to pace all releases.
+The first older upload after a recent batch is spaced from the batch's last
+successful upload. `--skip-download` explicitly disables source refresh, and an
+explicit URL retains its requested scope.

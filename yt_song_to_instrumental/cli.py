@@ -2,6 +2,7 @@ import argparse
 import logging
 import sys
 from typing import NoReturn
+from pathlib import Path
 
 import yaml
 from pydantic import ValidationError
@@ -16,6 +17,7 @@ from yt_song_to_instrumental.config import (
 from yt_song_to_instrumental.constants import (
     AVAILABLE_MODELS,
     DEFAULT_MODEL,
+    SOURCE_SINGLE_QUEUE_COUNT,
     LABEL_CONFIG_EXAMPLE_FILENAME,
     LABEL_CONFIG_FILENAME,
     VALID_PRIVACY_STATUSES,
@@ -27,6 +29,7 @@ from yt_song_to_instrumental.constants import (
     RETRYABLE_PIPELINE_FAILURE_STATUSES,
 )
 from yt_song_to_instrumental.history import HistoryDB
+from yt_song_to_instrumental.source_refresh import SourceCoordinator
 from yt_song_to_instrumental.pipeline import PipelineReport, process_url
 from yt_song_to_instrumental.preview import PreviewReport, preview_url
 from yt_song_to_instrumental.playlists import queue_unassigned_shorts, retry_playlist_assignments
@@ -284,7 +287,6 @@ def main() -> None:
         return
 
     if args.cleanup_uploaded:
-        from pathlib import Path
         from yt_song_to_instrumental.cleanup import (
             cleanup_all_uploaded,
             cleanup_orphan_artifacts,
@@ -410,6 +412,14 @@ def main() -> None:
             yt_config = _youtube_config_or_exit()
             service = authenticate(yt_config.client_secrets_file, yt_config.token_file)
 
+        coordinator = None
+        if not args.url and not args.skip_upload and not args.skip_download:
+            coordinator = SourceCoordinator(sources_to_run, history, Path(app_config.tmp_dir),
+                                            effective_model, label_config, args.shorts_only)
+            coordinator.refresh()
+            # Every source is now discovered before draining the shared queue.
+            sources_to_run = sources_to_run[:SOURCE_SINGLE_QUEUE_COUNT]
+
         upload_timeout_seconds = args.upload_timeout * 60 if args.upload_timeout else None
         shared_separator = None
         drain_priority_requests = None
@@ -431,6 +441,7 @@ def main() -> None:
                     upload_max_wait_seconds=upload_timeout_seconds,
                     cleanup_after_upload=not args.no_cleanup,
                     trim_silence=trim_silence,
+                    coordinator=coordinator,
                 )
                 for _, priority_report in priority_results:
                     _print_pipeline_report(priority_report)
@@ -460,19 +471,22 @@ def main() -> None:
                 upload_max_wait_seconds=upload_timeout_seconds,
                 cleanup_after_upload=not args.no_cleanup,
                 trim_silence=trim_silence,
-                preserve_original_video_title=args.preserve_original_video_title or src.preserve_original_video_title,
+                preserve_original_video_title=args.preserve_original_video_title or (src.preserve_original_video_title if coordinator is None else False),
                 tab=src.tab,
                 shorts_only=args.shorts_only,
                 create_album_playlists=src.create_album_playlists,
                 video_channel_url=src.video_channel_url,
                 separator=shared_separator,
                 before_track=drain_priority_requests,
+                coordinator=coordinator,
             )
             _print_pipeline_report(report)
             if any(track.status in RETRYABLE_PIPELINE_FAILURE_STATUSES for track in report.tracks):
                 retryable_failure = True
             if drain_priority_requests is not None:
                 drain_priority_requests()
+        if coordinator is not None and coordinator.failed_sources:
+            retryable_failure = True
     finally:
         history.close()
     if retryable_failure:

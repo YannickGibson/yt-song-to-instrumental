@@ -6,6 +6,8 @@ import yt_dlp
 
 from yt_song_to_instrumental.constants import (
     YTDLP_FORMAT,
+    SOURCE_SCAN_EMPTY_ERROR,
+    SOURCE_ENTRY_ID,
     YTDLP_RETRIES,
 )
 from yt_song_to_instrumental.history import HistoryDB
@@ -151,7 +153,7 @@ def _entry_passes_after_date(entry: dict, after_date: str | None) -> bool:
     return upload_date >= after_date
 
 
-def enumerate_videos(url: str, after_date: str | None = None, tab: str = "videos") -> list[dict]:
+def enumerate_videos(url: str, after_date: str | None = None, tab: str = "videos", *, strict: bool = False) -> list[dict]:
     """Return flat yt_dlp entries representing the videos this URL implies.
 
     - Single video URL → one entry.
@@ -187,10 +189,14 @@ def enumerate_videos(url: str, after_date: str | None = None, tab: str = "videos
         with yt_dlp.YoutubeDL(extract_opts) as ydl:
             playlist_info = ydl.extract_info(url, download=False)
     except yt_dlp.utils.DownloadError as e:
+        if strict:
+            raise
         logger.warning("Failed to extract info from %s: %s", url, e)
         return []
 
     if playlist_info is None:
+        if strict:
+            raise RuntimeError(SOURCE_SCAN_EMPTY_ERROR)
         logger.error("Failed to extract info from %s", url)
         return []
 
@@ -232,9 +238,13 @@ def enumerate_videos(url: str, after_date: str | None = None, tab: str = "videos
             with yt_dlp.YoutubeDL({"extract_flat": "in_playlist", "quiet": True, "no_warnings": True}) as ydl2:
                 playlist_info = ydl2.extract_info(tab_url, download=False)
         except yt_dlp.utils.DownloadError as e:
+            if strict:
+                raise
             logger.warning("Failed to extract tab info from %s: %s", tab_url, e)
             return []
         if playlist_info is None:
+            if strict:
+                raise RuntimeError(SOURCE_SCAN_EMPTY_ERROR)
             return []
         depth += 1
 
@@ -275,7 +285,8 @@ def enumerate_videos(url: str, after_date: str | None = None, tab: str = "videos
                                             child["_album_title"] = album_title
                                         flattened.append(child)
                     except yt_dlp.utils.DownloadError:
-                        pass
+                        if strict:
+                            raise
             else:
                 flattened.append(e)
         if flattened:
@@ -351,14 +362,20 @@ def download_tracks(
     tmp_dir: Path,
     after_date: str | None = None,
     tab: str = "videos",
+    *, entries: list[dict] | None = None,
 ) -> list[DownloadedTrack]:
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    entries = enumerate_videos(url, after_date=after_date, tab=tab)
+    if entries is None:
+        entries = enumerate_videos(url, after_date=after_date, tab=tab)
     raw_count = len(entries)
     entries = dedupe_entries_prefer_audio(entries)
     if raw_count != len(entries):
         logger.info("Dropped %d duplicate uploads (audio version preferred)", raw_count - len(entries))
+
+    entries = [entry for entry in entries if not history.is_downloaded(entry.get(SOURCE_ENTRY_ID))]
+    if not entries:
+        return []
 
     # Date filter: yt-dlp's `dateafter` is unreliable for music-channel videos
     # (flat extract surfaces no upload_date, and full-extract dateafter quietly

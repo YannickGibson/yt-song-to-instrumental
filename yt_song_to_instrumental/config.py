@@ -10,6 +10,9 @@ from pydantic_settings import BaseSettings
 
 from yt_song_to_instrumental.constants import (
     AFTER_DATE_PATTERN,
+    DEFAULT_RECENT_UPLOAD_WINDOW_DAYS,
+    RECENT_UPLOAD_WINDOW_KEY,
+    RECENT_UPLOAD_WINDOW_ERROR,
     AVAILABLE_MODELS,
     DEFAULT_MODEL,
     DEFAULT_PRIVACY_STATUS,
@@ -235,6 +238,13 @@ class LabelConfig:
         ):
             raise ValueError(UPLOAD_INTERVAL_JITTER_CONFIG_ERROR)
         self.upload_interval_jitter_seconds = float(raw_jitter)
+
+        recent_window = data.get(RECENT_UPLOAD_WINDOW_KEY)
+        if recent_window is None:
+            recent_window = DEFAULT_RECENT_UPLOAD_WINDOW_DAYS
+        if isinstance(recent_window, bool) or not isinstance(recent_window, int) or recent_window < DEFAULT_UPLOAD_INTERVAL_SECONDS:
+            raise ValueError(RECENT_UPLOAD_WINDOW_ERROR)
+        self.recent_upload_window_days = recent_window
 
         # Optional YouTube Shorts upload configuration
         self.upload_short: bool = bool(data.get("upload_short", False))

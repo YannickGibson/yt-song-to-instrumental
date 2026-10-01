@@ -595,3 +595,32 @@ STAGE_BINARY_READ_MODE = "rb"
 MISSING_STAGE_OUTPUT_LOG = "Completed separation output is missing; regenerating source %s"
 
 RUNTIME_DB_PATH = "DB_PATH"
+
+# Source discovery and recent-release admission.
+DEFAULT_RECENT_UPLOAD_WINDOW_DAYS = 30
+RECENT_UPLOAD_WINDOW_KEY = "recent_upload_window_days"
+RECENT_UPLOAD_WINDOW_ERROR = "recent_upload_window_days must be a nonnegative integer"
+SOURCE_DATE_FORMAT = "%Y%m%d"
+SOURCE_SCAN_WORKERS = 4
+SOURCE_SCAN_POLL_SECONDS = 900
+SOURCE_SCAN_START_LOG = "Refreshing all %d configured sources before queue admission"
+SOURCE_SCAN_COMPLETE_LOG = "Source refresh complete: %d sources, %d new downloads, %d failed scans"
+SOURCE_SCAN_FAILED_LOG = "Source refresh failed for %s: %s"
+SOURCE_SCAN_EMPTY_ERROR = "Source enumeration returned no response"
+SOURCE_ENTRY_ID = "id"
+SOURCE_FIRST_INDEX = 0
+SOURCE_EMPTY_COUNT = 0
+SOURCE_DEFERRED_LOG = "Queue refreshed; deferring source %s to admit higher-priority work"
+RECENT_UPLOAD_LOG = "Recent release %s: uploading without backlog pacing"
+SOURCE_MEMBERSHIP_SCHEMA = """
+CREATE TABLE IF NOT EXISTS source_memberships (
+    video_id TEXT NOT NULL, source_url TEXT NOT NULL, tab TEXT NOT NULL,
+    PRIMARY KEY(video_id, source_url, tab)
+);
+"""
+SOURCE_MEMBERSHIP_SAVE_QUERY = "INSERT OR IGNORE INTO source_memberships VALUES (?, ?, ?)"
+SOURCE_MEMBERSHIP_LOAD_QUERY = "SELECT source_url, tab FROM source_memberships WHERE video_id=?"
+SOURCE_PENDING_PRIORITY_QUERY = "SELECT 1 FROM priority_requests WHERE status=? LIMIT 1"
+SOURCE_DEFAULT_TAB = "videos"
+
+SOURCE_SINGLE_QUEUE_COUNT = 1

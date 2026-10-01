@@ -11,6 +11,7 @@
 - Tests live in `tests/`
 
 ## Rules
+0. NEVER save system specific informtion e.g. pi5, intel 7, Mac Pro M5. Keep all of the repository universal.
 1. No hardcoded values. All literals go in `yt_song_to_instrumental/constants.py` and are imported.
 2. No default values in `.get()` calls (e.g., `config.get("key", "default")` is forbidden).
 3. Always import at top of module. EXCEPTION: `yt_song_to_instrumental/separator/__init__.py` uses lazy imports for ML backends because they pull in multi-GB dependencies.
@@ -31,6 +32,7 @@
 18. This is a public repository. Never commit credentials, tokens, `.env`, `label.yml`, database/media artifacts, or artist/label-specific names and configuration. Keep tests, fixtures, docs, branch names, commit messages, and PR text generic.
 19. Priority requests may require a Short and a per-request Short content offset. Preserve instrumental-before-Short ordering, synchronized audio/video offsets, and completion only after every requested upload is durably recorded.
 20. Use generic branches, commits, and content; exclude private deployment details.
+21. Never leave pull requests unmerged or even worse, unersolved.
 
 ## Daily maintenance
 - Check the user service and timer, recent failures, SQLite queue/stage state, disk/memory headroom, and whether work is making progress.
@@ -85,3 +87,6 @@ preserve measurement scope and caveats from README.md.
 - Preserve the existing runtime directory and shared worker-lock path during migration. Inspect stages before stopping; `install` refuses an active worker and pauses admission.
 - Never synchronize the MPS environment with the development lockfile. Provision it with `scripts/install-mac-worker.sh` only while the worker is stopped.
 - A LaunchAgent requires login; boot-time daemon installation requires administrator privileges and an ordinary configured UserName. Verify MPS after logout before claiming unattended logout support.
+
+- Managed runs must refresh all configured sources before upload admission and reselect fresh work; never drain a stale per-source snapshot for hours before scanning the next artist.
+- Releases within the configured recent_upload_window_days (default 30 UTC calendar days) upload consecutively through the single worker; older/unknown dates retain paced uploads. Preserve quota checks and instrumental-before-Short ordering.

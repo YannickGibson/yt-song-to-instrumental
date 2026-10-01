@@ -371,12 +371,14 @@ class TestPipelineExitStatus:
         ])
         with patch("yt_song_to_instrumental.cli.load_label_config", return_value=cfg), \
              patch("yt_song_to_instrumental.cli._youtube_config_or_exit"), \
+             patch("yt_song_to_instrumental.cli.SourceCoordinator") as coordinator, \
              patch("yt_song_to_instrumental.cli.authenticate"), \
              patch("yt_song_to_instrumental.separator.get_separator"), \
              patch("yt_song_to_instrumental.cli.process_priority_requests", side_effect=[[(1, failed)], []]), \
              patch("yt_song_to_instrumental.cli.process_url", return_value=PipelineReport()) as process, \
              patch("yt_song_to_instrumental.cli.HistoryDB"), \
              patch.object(sys, "argv", ["yt-instrumental"]):
+            coordinator.return_value.failed_sources = set()
             with pytest.raises(SystemExit) as error:
                 main()
         assert error.value.code != 0

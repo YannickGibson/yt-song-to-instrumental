@@ -6,6 +6,10 @@ from pathlib import Path
 
 from yt_song_to_instrumental.constants import (
     DATA_DIR,
+    SOURCE_MEMBERSHIP_SCHEMA,
+    SOURCE_MEMBERSHIP_SAVE_QUERY,
+    SOURCE_MEMBERSHIP_LOAD_QUERY,
+    SOURCE_PENDING_PRIORITY_QUERY,
     DB_FILENAME,
     HISTORY_EXISTING_UPLOAD_QUERY,
     HISTORY_LATEST_UPLOAD_QUERY,
@@ -168,7 +172,7 @@ class HistoryDB:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self._db_path))
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(_SCHEMA)
+        self._conn.executescript(_SCHEMA + SOURCE_MEMBERSHIP_SCHEMA)
         self._migrate()
 
     def _migrate(self):
@@ -239,6 +243,16 @@ class HistoryDB:
             self._conn.commit()
         except Exception:
             pass
+
+    def record_source_membership(self, video_id, source_url, tab):
+        self._conn.execute(SOURCE_MEMBERSHIP_SAVE_QUERY, (video_id, source_url, tab))
+        self._conn.commit()
+
+    def source_memberships(self, video_id):
+        return {tuple(row) for row in self._conn.execute(SOURCE_MEMBERSHIP_LOAD_QUERY, (video_id,))}
+
+    def has_pending_priority_requests(self):
+        return self._conn.execute(SOURCE_PENDING_PRIORITY_QUERY, (PRIORITY_STATUS_PENDING,)).fetchone() is not None
 
     def close(self):
         self._conn.close()
