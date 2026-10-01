@@ -150,6 +150,8 @@ def test_already_uploaded_short_remains_untouched(short_case):
 ])
 def test_motion_and_audio_cannot_override_source_rejection(short_case, source_title, entries):
     ctx, track, align, render, upload, detect, _ = short_case
+    ctx.force_short = False
+    ctx.label_config.upload_short = True
     with (
         patch("yt_song_to_instrumental.pipeline.get_source_video_title", return_value=source_title),
         patch("yt_song_to_instrumental.pipeline.is_trusted_music_video", wraps=is_trusted_music_video),
@@ -163,6 +165,24 @@ def test_motion_and_audio_cannot_override_source_rejection(short_case, source_ti
     render.assert_not_called()
     upload.assert_not_called()
     assert ctx.history.get_short_status(track.video_id, ctx.model) == "skipped_not_music_video"
+    assert ctx.history.get_existing_upload(track.video_id).youtube_upload_id == "existing-full"
+
+
+@pytest.mark.parametrize("passes_structure", [True, False])
+def test_requested_unlabeled_source_still_requires_structure_and_preserves_full_upload(short_case, passes_structure):
+    ctx, track, align, render, upload, detect, _ = short_case
+    detect.return_value = (passes_structure, 30.0)
+    with (
+        patch("yt_song_to_instrumental.pipeline.get_source_video_title", return_value="Track"),
+        patch("yt_song_to_instrumental.pipeline.is_trusted_music_video", wraps=is_trusted_music_video),
+        patch("yt_song_to_instrumental.video_finder.get_channel_videos", return_value=[{"id": track.video_id}]),
+        patch("yt_song_to_instrumental.pipeline.find_and_verify_music_video", return_value=(None, 0.0, None)),
+    ):
+        _run(ctx, track)
+    assert detect.call_count == (2 if passes_structure else 1)
+    assert bool(upload.call_count) is passes_structure
+    assert bool(render.call_count) is passes_structure
+    assert ctx.history.is_short_uploaded(track.video_id, ctx.model) is passes_structure
     assert ctx.history.get_existing_upload(track.video_id).youtube_upload_id == "existing-full"
 
 

@@ -628,3 +628,12 @@ SOURCE_PENDING_PRIORITY_QUERY = "SELECT 1 FROM priority_requests WHERE status=? 
 SOURCE_DEFAULT_TAB = "videos"
 
 SOURCE_SINGLE_QUEUE_COUNT = 1
+
+SHORT_PUBLIC_TITLE_OPTIONS = {
+    "quiet": True, "no_warnings": True, "skip_download": True,
+    "noplaylist": True, "socket_timeout": 15, "retries": 0, "extractor_retries": 0,
+}
+SHORT_PUBLIC_TITLE_KEY = "title"
+SHORT_PUBLIC_TITLE_ID_KEY = "id"
+SHORT_PUBLIC_TITLE_FALLBACK_LOG = "Metadata API budget unavailable; reading the original public source title"
+SHORT_PUBLIC_TITLE_FAILED_LOG = "Public source title unavailable; keeping Short retryable"

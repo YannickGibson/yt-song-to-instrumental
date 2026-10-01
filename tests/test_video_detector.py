@@ -6,7 +6,7 @@ import pytest
 from PIL import Image, ImageDraw
 import numpy as np
 
-from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title, _frame_correlation
+from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title, get_public_source_title, _frame_correlation
 from yt_song_to_instrumental.youtube_quota import QuotaReserved
 
 
@@ -134,8 +134,38 @@ def test_raw_source_title_fails_closed():
     assert get_source_video_title(service, "source") is None
 
 
-def test_source_title_budget_exhaustion_explains_short_deferral(caplog):
+def test_source_title_budget_exhaustion_explains_short_deferral(caplog, monkeypatch):
+    monkeypatch.setattr("yt_song_to_instrumental.video_detector.get_public_source_title", lambda _: None)
     service = MagicMock()
     service.videos.return_value.list.return_value.execute.side_effect = QuotaReserved("spent")
     assert get_source_video_title(service, "source") is None
     assert "API budget resets" in caplog.text
+
+
+def test_source_title_uses_original_public_metadata_when_api_budget_is_spent(monkeypatch):
+    service = MagicMock()
+    service.videos.return_value.list.return_value.execute.side_effect = QuotaReserved("spent")
+    extractor = MagicMock()
+    extractor.return_value.__enter__.return_value.extract_info.return_value = {
+        "id": "SourceVideo", "title": "Artist - Track (Official Visualizer)"}
+    monkeypatch.setattr("yt_song_to_instrumental.video_detector.yt_dlp.YoutubeDL", extractor)
+    assert get_source_video_title(service, "SourceVideo") == "Artist - Track (Official Visualizer)"
+    extractor.return_value.__enter__.return_value.extract_info.assert_called_once_with(
+        "https://www.youtube.com/watch?v=SourceVideo", download=False)
+
+
+@pytest.mark.parametrize("metadata", [None, {"id": "other", "title": "Track"},
+                                       {"id": "SourceVideo", "title": " "},
+                                       {"id": "SourceVideo", "title": None}])
+def test_public_title_requires_exact_source_and_valid_title(monkeypatch, metadata):
+    extractor = MagicMock()
+    extractor.return_value.__enter__.return_value.extract_info.return_value = metadata
+    monkeypatch.setattr("yt_song_to_instrumental.video_detector.yt_dlp.YoutubeDL", extractor)
+    assert get_public_source_title("SourceVideo") is None
+
+
+def test_failed_public_title_remains_retryable(monkeypatch):
+    extractor = MagicMock()
+    extractor.return_value.__enter__.return_value.extract_info.side_effect = RuntimeError("temporary")
+    monkeypatch.setattr("yt_song_to_instrumental.video_detector.yt_dlp.YoutubeDL", extractor)
+    assert get_public_source_title("SourceVideo") is None

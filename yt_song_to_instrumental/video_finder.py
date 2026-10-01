@@ -25,7 +25,7 @@ from yt_song_to_instrumental.constants import (
     YOUTUBE_CANONICAL_VIDEO_URL,
 )
 from yt_song_to_instrumental.downloader import download_source_video
-from yt_song_to_instrumental.video_detector import detect_if_music_video, has_music_video_label
+from yt_song_to_instrumental.video_detector import detect_if_music_video, has_music_video_label, has_rejected_video_label
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +73,17 @@ def get_channel_videos(channel_url: str) -> list[dict]:
         raise VideoChannelUnavailable(VIDEO_CHANNEL_RESPONSE_ERROR) from error
 
 
-def is_trusted_music_video(video_id: str, title: str, channel_url: str | None) -> bool:
-    """Require both explicit video labeling and membership in the approved channel.
+def is_trusted_music_video(video_id: str, title: str, channel_url: str | None, *, requested_source: bool = False) -> bool:
+    """Require approved-channel membership and normally explicit video labeling.
 
     Names and words such as 'official' alone do not establish who uploaded it.
     Missing channel evidence fails closed, including for a direct release source.
+    An explicitly requested source may omit the music-video label; negative
+    labels and the subsequent structural screening still apply.
     """
-    if not channel_url or not has_music_video_label(title):
+    if not channel_url or not title.strip() or has_rejected_video_label(title):
+        return False
+    if not requested_source and not has_music_video_label(title):
         return False
     return any(entry and entry.get("id") == video_id for entry in get_channel_videos(channel_url))
 
