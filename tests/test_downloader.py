@@ -66,6 +66,29 @@ class TestEnumerateVideos:
             result = enumerate_videos("https://yt.com/playlist?list=X")
         assert result == entries
 
+    def test_empty_channel_is_not_downloaded_as_a_video(self, tmp_path):
+        channel = {"id": "example-channel", "_type": "playlist", "entries": [],
+                   "title": "Example Channel", "webpage_url": "https://yt.com/@example/videos"}
+        instances = self._ydl_returning(channel)
+        db = HistoryDB(tmp_path / "history.db")
+        with patch("yt_song_to_instrumental.downloader.yt_dlp.YoutubeDL", side_effect=instances) as ydl:
+            assert download_tracks(channel["webpage_url"], db, tmp_path) == []
+        assert ydl.call_count == 1
+        assert db.get_all_downloads() == []
+        db.close()
+
+    def test_playlist_without_entries_is_not_a_single_video(self):
+        playlist = {"_type": "playlist", "id": "example-list", "title": "Example"}
+        with patch("yt_song_to_instrumental.downloader.yt_dlp.YoutubeDL", side_effect=self._ydl_returning(playlist)):
+            assert enumerate_videos("https://yt.com/playlist?list=example") == []
+
+    def test_empty_release_does_not_fall_back_to_album_download(self):
+        releases = {"_type": "playlist", "entries": [
+            {"_type": "playlist", "id": "example-album", "url": "https://yt.com/playlist?list=example"}]}
+        empty_album = {"_type": "playlist", "entries": []}
+        with patch("yt_song_to_instrumental.downloader.yt_dlp.YoutubeDL", side_effect=self._ydl_returning(releases, empty_album)):
+            assert enumerate_videos("https://yt.com/@example/releases", tab="releases") == []
+
     def test_tabbed_channel_picks_videos_tab_only(self):
         tabbed = {
             "_type": "playlist",

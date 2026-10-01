@@ -8,6 +8,9 @@ from yt_song_to_instrumental.constants import (
     YTDLP_FORMAT,
     SOURCE_SCAN_EMPTY_ERROR,
     SOURCE_ENTRY_ID,
+    SOURCE_ENTRIES_KEY,
+    SOURCE_TYPE_KEY,
+    SOURCE_COLLECTION_TYPES,
     YTDLP_RETRIES,
 )
 from yt_song_to_instrumental.history import HistoryDB
@@ -261,7 +264,9 @@ def enumerate_videos(url: str, after_date: str | None = None, tab: str = "videos
         or source_channel_id
     )
 
-    entries = playlist_info.get("entries") or [playlist_info]
+    entries = playlist_info.get(SOURCE_ENTRIES_KEY)
+    if entries is None:
+        entries = [] if playlist_info.get(SOURCE_TYPE_KEY) in SOURCE_COLLECTION_TYPES else [playlist_info]
     entries = [e for e in entries if isinstance(e, dict)]
 
     if tab_name == "releases":
@@ -289,8 +294,7 @@ def enumerate_videos(url: str, after_date: str | None = None, tab: str = "videos
                             raise
             else:
                 flattened.append(e)
-        if flattened:
-            entries = flattened
+        entries = flattened
 
     if after_date:
         entries = [e for e in entries if _entry_passes_after_date(e, after_date)]
