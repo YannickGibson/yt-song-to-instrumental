@@ -100,6 +100,14 @@ def backup_databases(config, state, now):
     event(C.RUNTIME_BACKUPS_COMPLETE, date=due)
 
 
+def backup_if_due(config, state, now):
+    try:
+        backup_databases(config, state, now)
+    except Exception as exc:
+        state[C.RUNTIME_BACKUP_RETRY_AFTER] = time.time() + C.RUNTIME_NUMBER_300
+        event(C.RUNTIME_BACKUP_FAILED, error_type=type(exc).__name__)
+
+
 def retry_delay(config, state):
     failures = state.get(C.RUNTIME_CONSECUTIVE_FAILURES) or C.RUNTIME_NUMBER_0
     return min(config[C.RUNTIME_RETRY_MAX_SECONDS], config[C.RUNTIME_RETRY_SECONDS] * C.RUNTIME_NUMBER_2 ** min(failures, C.RUNTIME_NUMBER_10))
@@ -152,11 +160,7 @@ def main():
         if reset.exists():
             reset.unlink()
             state.update({C.RUNTIME_CONSECUTIVE_FAILURES: C.RUNTIME_NUMBER_0, C.RUNTIME_RETRY_AFTER: C.RUNTIME_NUMBER_0})
-        try:
-            backup_databases(config, state, now)
-        except Exception as exc:
-            state[C.RUNTIME_BACKUP_RETRY_AFTER] = time.time() + C.RUNTIME_NUMBER_300
-            event(C.RUNTIME_BACKUP_FAILED, error_type=type(exc).__name__)
+        backup_if_due(config, state, now)
         try:
             pending = pending_requests(database)
             state[C.RUNTIME_PENDING_REQUEST_COUNT] = len(pending)
@@ -195,7 +199,10 @@ def main():
                         event(C.RUNTIME_PIPELINE_STARTED, pid=child.pid, daily_due=due,
                               pending_count=len(pending))
                         while child.poll() is None:
-                            state[C.RUNTIME_HEARTBEAT] = datetime.now(ZONE).isoformat()
+                            now = datetime.now(ZONE)
+                            if not stop:
+                                backup_if_due(config, state, now)
+                            state[C.RUNTIME_HEARTBEAT] = now.isoformat()
                             state[C.RUNTIME_PAUSED] = pause.exists()
                             write_json(state_path, state)
                             if stop:

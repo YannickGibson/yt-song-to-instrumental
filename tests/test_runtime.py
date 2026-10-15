@@ -245,3 +245,59 @@ def test_system_install_assigns_private_files_to_worker_account(deployment, monk
     assert Path(config["worker_lock"]) in owned
     assert root / "supervisor.lock" in owned
     assert Path(config["pause_file"]) in owned
+
+
+def test_backup_deadline_is_serviced_while_worker_remains_active(deployment, monkeypatch):
+    config, path, _, _ = deployment
+    clock = Mock()
+    clock.now.return_value = datetime(2026, 1, 2, 2, 54, tzinfo=ZoneInfo("UTC"))
+    monkeypatch.setattr(runtime, "datetime", clock)
+    monkeypatch.setattr(sys, "argv", ["runtime", "--config", str(path)])
+    handlers = {}
+    monkeypatch.setattr(runtime.signal, "signal", lambda sig, fn: handlers.__setitem__(sig, fn))
+    monkeypatch.setattr(runtime.os, "killpg", Mock())
+    child = Mock(pid=12345)
+    child.poll.side_effect = [None, 0, 0]
+    child.returncode = 0
+
+    def spawn(*args, **kwargs):
+        clock.now.return_value = datetime(2026, 1, 2, 2, 56, tzinfo=ZoneInfo("UTC"))
+        return child
+
+    spawn_mock = Mock(side_effect=spawn)
+    monkeypatch.setattr(runtime.subprocess, "Popen", spawn_mock)
+
+    def stop_after_heartbeat(_seconds):
+        state = read_state(config)
+        assert state["job_running"]
+        assert state["worker_pid"] == child.pid
+        assert state["backup_date"] == "2026-01-02"
+        backup = Path(config["runtime_dir"]) / "backups" / "0-history-2026-01-02.db"
+        with sqlite3.connect(backup) as db:
+            assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+    monkeypatch.setattr(runtime.time, "sleep", stop_after_heartbeat)
+    runtime.main()
+    spawn_mock.assert_called_once()
+    assert read_state(config)["backup_date"] == "2026-01-02"
+
+
+def test_backup_failure_retries_without_interrupting_worker_state(deployment, monkeypatch):
+    config, _, _, _ = deployment
+    state = {"worker_pid": 12345, "job_running": True}
+    now = datetime(2026, 1, 2, 12, tzinfo=ZoneInfo("UTC"))
+    monkeypatch.setattr(runtime.time, "time", lambda: 1000)
+    connect = Mock(side_effect=sqlite3.OperationalError("temporary backup failure"))
+    original_connect = sqlite3.connect
+    monkeypatch.setattr(runtime.sqlite3, "connect", connect)
+    runtime.backup_if_due(config, state, now)
+    assert state == {"worker_pid": 12345, "job_running": True, "backup_retry_after": 1300}
+    runtime.backup_if_due(config, state, now)
+    connect.assert_called_once()
+    monkeypatch.setattr(runtime.sqlite3, "connect", original_connect)
+    monkeypatch.setattr(runtime.time, "time", lambda: 1300)
+    runtime.backup_if_due(config, state, now)
+    assert state["backup_date"] == "2026-01-02"
+    assert state["backup_retry_after"] == 0
+    assert state["worker_pid"] == 12345 and state["job_running"]
