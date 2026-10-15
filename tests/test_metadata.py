@@ -79,7 +79,7 @@ class TestRenderTemplate:
             track_title="Stargazer",
             album_name="Longer Days",
             original_url="https://youtube.com/watch?v=abc",
-            original_channel_url="https://youtube.com/@ovosound",
+            original_channel_url="https://youtube.com/@example-label",
             model_name="HTDemucs",
             label_name="Crescent",
         )
@@ -87,7 +87,7 @@ class TestRenderTemplate:
         assert "Stargazer" in result
         assert "Longer Days" in result
         assert "https://youtube.com/watch?v=abc" in result
-        assert "https://youtube.com/@ovosound" in result
+        assert "https://youtube.com/@example-label" in result
         assert "HTDemucs" in result
         assert "Crescent" in result
         assert "#rikuvex" in result.lower()
@@ -132,11 +132,11 @@ class TestRenderDescription:
             artist_name="Riku Vex",
             track_title="Stargazer",
             original_url="https://youtube.com/watch?v=abc",
-            original_channel_url="https://youtube.com/@ovosound",
+            original_channel_url="https://youtube.com/@example-label",
         )
         assert "Riku Vex — Stargazer" in result
         assert "https://youtube.com/watch?v=abc" in result
-        assert "https://youtube.com/@ovosound" in result
+        assert "https://youtube.com/@example-label" in result
         assert "#rikuvex" in result.lower()
 
     def test_video_title_tag_substituted(self):

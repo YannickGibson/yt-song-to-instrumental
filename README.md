@@ -26,9 +26,9 @@ Download songs from YouTube, extract instrumentals using AI source separation, a
 
 | Model | ID | RAM guidance | GPU Required | GPU VRAM | Notes |
 |-------|----|---------|-------------|----------|-------|
-| HTDemucs | `htdemucs` | 4 GB | No (recommended) | 2 GB+ | 4-stem demucs v4. Measured ~7x realtime on Pi 4. |
-| UVR-MDX-NET Inst_HQ_4 | `inst_hq_4` | 3 GB | No (recommended) | 1 GB+ | ONNX via `audio-separator`. 2-stem vocals/instrumental. Cleaner vocal removal but ~12x realtime on Pi 4 — best on x86/GPU. |
-| MelBand RoFormer INSTV7N | `mel_gabox_instv7n` | Observed worker peak ~3.5 GiB; system minimum unverified | MPS required | Shared system memory | Native FP16 with protected FP32 parameters, overlap 4, model-default segments, and two CPU threads. |
+| HTDemucs | `htdemucs` | 4 GB | No (recommended) | 2 GB+ | 4-stem demucs v4; performance varies by execution environment. |
+| UVR-MDX-NET Inst_HQ_4 | `inst_hq_4` | 3 GB | No (recommended) | 1 GB+ | ONNX via `audio-separator`. 2-stem vocals/instrumental. Runtime and memory vary by recording and execution backend. |
+| MelBand RoFormer INSTV7N | `mel_gabox_instv7n` | Budget estimate 8 GB; minimum unverified | MPS required | Shared system memory | Native FP16 with protected FP32 parameters, overlap 4, model-default segments, and two CPU threads. |
 
 The MPS backend requires `audio-separator[cpu]==0.47.0`, `torch==2.14.0`, and
 `demucs==4.1.0` in a separate environment. The legacy CPU extras and lockfile
@@ -40,29 +40,27 @@ Invoke its installed executable directly. Set
 Published source videos are recognized across model changes, and pending Shorts
 retain their historical model and original upload association.
 
-#### INSTV7N memory requirements
+#### INSTV7N memory guidance
 
-Measurements for `mel_gabox_instv7n` on an MPS device, using native FP16 with
-protected FP32 parameters, batch size 1, overlap 4, model-default segments,
-and two CPU threads:
+The backend's **8 GB budget is a planning estimate**, not a validated minimum.
+It requires MPS and uses shared system memory. Leave headroom for the operating
+system and audio/video subprocesses. Run one separation worker at a time and
+validate memory use for your recording lengths and batch/segment settings.
+Host-specific benchmarks and deployment measurements belong in private notes.
 
-| Measurement | Observed usage | Scope |
-|-------------|----------------|-------|
-| Worker physical footprint | ~3.5 GiB peak | Process-lifetime peak reported by `vmmap -summary` for a running worker |
-| Process resident memory (RSS) | ~2.03 GiB peak in each run | Two separate full-song runs, approximately 163 and 232 seconds of audio |
-| MPS driver allocations | 2.62–3.62 GiB sampled maxima | Same two full-song runs, sampled every 0.5 seconds |
+## Public code and private deployment
 
-These counters overlap in unified memory; **do not add them together**. The
-[MPS driver counter](https://docs.pytorch.org/docs/2.14/generated/torch.mps.driver_allocated_memory.html)
-includes cached allocations and framework allocations. Sampling can miss brief
-peaks, and the worker footprint excludes separate audio/video subprocesses.
+This repository contains reusable processing code and an optional single-worker
+supervisor. The supervisor's service adapter supports launchd; that is platform
+integration code, not a configuration for any particular computer or channel.
+Use `runtime.example.json` only as a template. Store the actual runtime directory,
+service definitions, account paths, schedules, logs, databases and backups outside
+this repository. Never commit a filled-in runtime config, `.env`, OAuth files,
+`label.yml`, private source lists, or channel identity.
 
-The backend's **8 GB budget is a planning estimate**. Minimum system RAM and
-compatibility with an 8 GB system remain unverified. Allow additional headroom
-for the operating system, audio/video processing, and other applications.
-Run one separation worker at a time; longer inputs or different batch/segment
-settings require separate validation. This backend requires **MPS** and uses
-shared system memory rather than a separate VRAM budget.
+For the separate MPS dependency environment, use
+`scripts/install-mps-worker.sh` (optionally setting `YT_WORKER_ENV`). Do not
+synchronize that environment with the development lockfile.
 
 ## Setup
 
@@ -253,7 +251,7 @@ Playlist names are configurable in `label.yml`. Playlists are created on YouTube
 2. Implement the `SeparatorBackend` ABC from `separator/base.py`
 3. Register it in `separator/__init__.py` (add to the `get_separator()` factory)
 4. Add the model ID to `constants.py` (`AVAILABLE_MODELS`, `MODEL_DISPLAY_NAMES`)
-5. Document memory requirements in `CLAUDE.md` and this README
+5. Document memory requirements in `AGENTS.md` and this README
 
 ## Development
 

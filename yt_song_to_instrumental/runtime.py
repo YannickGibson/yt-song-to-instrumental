@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single-worker macOS supervisor with durable recovery and shared flock admission."""
+"""Single-worker supervisor with durable recovery and shared flock admission."""
 import argparse
 from datetime import datetime, timedelta
 import fcntl

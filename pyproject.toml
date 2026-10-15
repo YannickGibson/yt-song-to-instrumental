@@ -33,11 +33,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# torch/torchaudio capped <2.4: newer PyTorch aarch64 wheels use KleidiAI
-# kernels that require ARMv8.2 dotprod/fp16, which Cortex-A72 (Pi 4) lacks —
-# we'd hit SIGILL on apply_model. 2.3.x is the last safe baseline for this CPU,
-# which is also why requires-python is capped at <3.13 (torch 2.3 only has
-# cp312 wheels).
+# Retain the established CPU dependency baseline and its supported Python range.
+# The optional MPS worker has independent constraints; do not mix environments.
 demucs = ["demucs>=4.0.0,<4.1.0", "torch>=2.0,<2.4", "torchaudio>=2.0,<2.4", "soundfile", "audioread"]
 mdxnet = ["onnxruntime", "audioread", "soundfile"]
 mdxnet-gpu = ["onnxruntime-gpu", "audioread", "soundfile"]

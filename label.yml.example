@@ -79,9 +79,8 @@ create_playlists_for_collaborators: false
 
 # Separation backend used when --model is not passed on the CLI.
 # Choices:
-#   htdemucs   — 4-stem demucs v4. CPU-friendly, ~7x realtime on Pi 4.
-#   inst_hq_4  — UVR-MDX-NET Inst_HQ_4 (ONNX). Cleaner vocals removal but
-#                ~12x realtime + 3 GB RAM on Pi 4. Best on x86/GPU.
+#   htdemucs   — 4-stem demucs v4; supports CPU execution.
+#   inst_hq_4  — UVR-MDX-NET Inst_HQ_4 (ONNX); plan for at least 3 GB RAM.
 default_model: htdemucs
 
 # When true: trim silent or vocals-only sections at the start and end of instrumentals.

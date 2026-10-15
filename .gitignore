@@ -1,6 +1,6 @@
 .env
 .venv
-.venv-mac/
+.venv-*/
 label.yml
 data/
 output/
@@ -25,3 +25,6 @@ runtime.local.json
 *.db-wal
 *.log
 backups/
+
+# Local interpreter/session recovery artifacts
+*.ses

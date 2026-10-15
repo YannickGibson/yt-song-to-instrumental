@@ -8,9 +8,11 @@
   "worker_log": "/path/to/private/worker.log",
   "pause_file": "/path/to/private/paused",
   "command": [
-    "/path/to/project/.venv-mac/bin/python",
-    "-m", "yt_song_to_instrumental.cli",
-    "--model", "mel_gabox_instv7n", "--upload-timeout", "120"
+    "/path/to/project/.venv-worker/bin/python",
+    "-m",
+    "yt_song_to_instrumental.cli",
+    "--model",
+    "htdemucs"
   ],
   "backup_databases": [
     "/path/to/project/data/history.db",
@@ -19,10 +21,6 @@
   "timezone": "UTC",
   "environment": {
     "DB_PATH": "/path/to/project/data/history.db",
-    "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-    "PYTHONUNBUFFERED": "1",
-    "OMP_NUM_THREADS": "2",
-    "MKL_NUM_THREADS": "2",
-    "PYTORCH_ENABLE_MPS_FALLBACK": "1"
+    "PYTHONUNBUFFERED": "1"
   }
 }

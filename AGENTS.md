@@ -11,7 +11,7 @@
 - Tests live in `tests/`
 
 ## Rules
-0. NEVER save system specific informtion e.g. pi5, intel 7, Mac Pro M5. Keep all of the repository universal.
+0. Keep this public repository generic. Never include deployment hostnames, local account paths, private channel identities, source catalogs, or host-specific measurements. Store deployment configuration and operational notes outside the repository.
 1. No hardcoded values. All literals go in `yt_song_to_instrumental/constants.py` and are imported.
 2. No default values in `.get()` calls (e.g., `config.get("key", "default")` is forbidden).
 3. Always import at top of module. EXCEPTION: `yt_song_to_instrumental/separator/__init__.py` uses lazy imports for ML backends because they pull in multi-GB dependencies.
@@ -56,9 +56,9 @@ When adding a new separation model backend, document its requirements here AND i
 
 | Model | RAM guidance | GPU Required | GPU VRAM | Notes |
 |-------|---------|-------------|----------|-------|
-| HTDemucs | 4 GB | No (but recommended) | 2 GB+ | 4-stem demucs v4. Measured ~7x realtime on Pi 4 (4 GB). |
-| Inst_HQ_4 | 3 GB | No (but recommended) | 1 GB+ | UVR-MDX-NET via ONNX (audio-separator). 2-stem vocals/instrumental. Cleaner vocal removal than HTDemucs but ~12x realtime on Pi 4 — best on x86/GPU. |
-| MelBand RoFormer INSTV7N | Observed worker peak ~3.5 GiB; system minimum unverified | MPS required | Shared system memory | `mel_gabox_instv7n`: native FP16 with protected FP32 parameters, overlap 4, model-default segments, two CPU threads. |
+| HTDemucs | 4 GB | No (but recommended) | 2 GB+ | 4-stem demucs v4; performance depends on the execution environment. |
+| Inst_HQ_4 | 3 GB | No (but recommended) | 1 GB+ | UVR-MDX-NET via ONNX (audio-separator). 2-stem vocals/instrumental. Runtime and memory depend on the recording and execution backend. |
+| MelBand RoFormer INSTV7N | Budget estimate 8 GB; minimum unverified | MPS required | Shared system memory | `mel_gabox_instv7n`: native FP16 with protected FP32 parameters, overlap 4, model-default segments, two CPU threads. |
 
 The MPS backend requires audio-separator 0.47.0, torch 2.14.0 and demucs 4.1.0
 in a separate environment; the legacy CPU extras/lockfile are incompatible.
@@ -68,10 +68,6 @@ Keep development `.venv` independent of the MPS worker environment because
 checkpoint cache. A change of default model must preserve source-level upload
 deduplication and historical model associations for remaining Shorts.
 
-INSTV7N measurements: a running worker reported ~3.5 GiB peak physical
-footprint; two full-song runs reported ~2.03 GiB peak RSS each and
-2.62–3.62 GiB sampled MPS driver maxima (0.5-second sampling). These counters
-overlap; never sum them or treat them as minimum system RAM. The 8 GB budget
-remains an estimate, and 8 GB system compatibility is unverified. Keep one
-worker with batch size 1, allow headroom for the OS and subprocesses, and
-preserve measurement scope and caveats from README.md.
+Memory estimates are planning guidance, not measured deployment guarantees.
+Validate memory headroom for the chosen recording lengths and execution backend.
+Keep host-specific benchmarks and operational measurements private.

@@ -30,7 +30,7 @@ LAST_LOG=$(journalctl --user-unit "$UNIT" -n 20 --no-pager 2>/dev/null || echo "
 # When seen, append actionable instructions so the alert is one-touch from a phone.
 HINT=""
 if grep -qE 'invalid_grant|Token has been expired or revoked|RefreshError' <<<"$LAST_LOG"; then
-    HINT=$'\n\n🔐 OAuth refresh token is expired/revoked. To re-link, SSH in and run:\n  ssh -L 8080:localhost:8080 pi@'"$(hostname)"$'\n  cd /home/pi/code/yt-song-to-instrumental\n  mv token.json token.json.bak\n  uv run yt-instrumental --sync-channel\nCopy the printed URL into a browser, approve, and the run will re-link.'
+    HINT=$'\n\nOAuth refresh token is expired or revoked. Reauthorize the configured YouTube account using your private deployment runbook. Never share OAuth tokens or authorization codes in messages.'
 fi
 
 MESSAGE="[FAIL] ${UNIT}

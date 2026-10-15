@@ -28,7 +28,7 @@ class InstHQ4Backend(SeparatorBackend):
         return False
 
     def min_memory_gb(self) -> float:
-        # Measured ~2.45 GB peak RSS on Pi 4 during separation; round up.
+        # Conservative memory estimate; actual use depends on input and backend.
         return 3.0
 
     def _load(self, work_dir: Path) -> Separator:
@@ -36,7 +36,7 @@ class InstHQ4Backend(SeparatorBackend):
         # rebuild the Separator per call against a fresh per-track tmp dir.
         # The model itself is cached on disk in AUDIO_SEPARATOR_MODELS_DIR
         # after the first download (~59 MB) and is re-loaded into memory each
-        # call. Re-loading is fast (~11 s) relative to separation (~17 min on Pi).
+        # call. This keeps per-track output directories isolated.
         models_dir = Path(AUDIO_SEPARATOR_MODELS_DIR)
         models_dir.mkdir(parents=True, exist_ok=True)
         sep = Separator(

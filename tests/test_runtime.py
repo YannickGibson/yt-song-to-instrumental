@@ -94,7 +94,7 @@ def test_retry_delay_remains_bounded_after_many_failures():
 
 
 def test_rejects_shared_development_environment(tmp_path):
-    env = tmp_path / ".venv-mac"
+    env = tmp_path / ".venv-worker"
     env.mkdir()
     (tmp_path / ".venv").symlink_to(env)
     path = tmp_path / "config.json"
