@@ -322,6 +322,9 @@ def _select_tracks(
         if target_set is not None and dl.video_id not in target_set:
             continue
         existing_upload = history.get_existing_upload(dl.video_id) if not skip_upload else None
+        if (not skip_upload and not shorts_only and existing_upload is None
+                and history.get_duplicate_song_upload(dl.video_id) is not None):
+            continue
         track_model = existing_upload.model if existing_upload is not None else model
         needs_separation = existing_upload is None and not history.is_separated(dl.video_id, model)
         needs_upload = not skip_upload and not shorts_only and existing_upload is None
@@ -823,6 +826,14 @@ def _upload_track(
             except Exception as e:
                 logger.warning("Cleanup failed for %s: %s", track.title, e)
         logger.info("Already uploaded: %s", track.title)
+        report.skipped += 1
+        report.tracks.append(
+            TrackReport(track.video_id, track.title, artist, TRACK_STATUS_ALREADY_UPLOADED)
+        )
+        return
+
+    duplicate = ctx.history.get_duplicate_song_upload(track.video_id)
+    if duplicate is not None and not ctx.shorts_only:
         report.skipped += 1
         report.tracks.append(
             TrackReport(track.video_id, track.title, artist, TRACK_STATUS_ALREADY_UPLOADED)

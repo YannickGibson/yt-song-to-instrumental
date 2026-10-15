@@ -142,3 +142,47 @@ def test_priority_completion_during_track_hook_prevents_stale_selected_upload(hi
     separate.assert_not_called()
     upload.assert_not_called()
     assert report.tracks[0].status == "already_uploaded"
+
+
+def test_cross_source_punctuation_duplicate_skips_separation_and_upload(history, config, label, monkeypatch):
+    history.record_upload("PastTrack01", "htdemucs", "Original001", "public")
+    history.record_download(
+        "NewTrack001", "url", "Past Track .", "Example Artist", "",
+        "Channel", "channel-url", "missing.wav", "missing.jpg",
+    )
+    separate = MagicMock()
+    upload = MagicMock()
+    monkeypatch.setattr("yt_song_to_instrumental.pipeline._separate_track", separate)
+    monkeypatch.setattr("yt_song_to_instrumental.pipeline.upload_video", upload)
+    process_url("https://youtube.com/@example", config, label, None, history=history,
+                separator=MagicMock(), skip_download=True)
+    separate.assert_not_called()
+    upload.assert_not_called()
+    assert history.get_existing_upload("NewTrack001") is None
+
+
+def test_final_upload_guard_blocks_cross_source_duplicate(history, config, label, monkeypatch):
+    history.record_upload("PastTrack01", "htdemucs", "Original001", "public")
+    history.record_separation("PastTrack01", "new-model", "new.wav", True)
+    history.record_download("NewTrack001", "url", "Past Track .", "Example Artist", "",
+                            "Channel", "url", "audio", "thumb")
+    upload = MagicMock()
+    render = MagicMock()
+    monkeypatch.setattr("yt_song_to_instrumental.pipeline.upload_video", upload)
+    monkeypatch.setattr("yt_song_to_instrumental.pipeline.render_video", render)
+    context = _RunContext(
+        service=None, history=history, label_config=label, separator=MagicMock(),
+        model="new-model", display_name="New Model", privacy="public",
+        tmp_dir=Path(config.tmp_dir), output_dir=Path(config.output_dir),
+        upload_max_wait_seconds=None, cleanup_after_upload=False,
+        trim_silence=False, trim_silence_threshold_db=-35.0,
+        preserve_original_video_title=False,
+    )
+    report = PipelineReport()
+
+    _upload_track(history.get_download("NewTrack001"), "Example Artist", "", context, report)
+
+    upload.assert_not_called()
+    render.assert_not_called()
+    assert report.tracks[0].status == "already_uploaded"
+    assert len(history.get_all_uploads()) == 1

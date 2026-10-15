@@ -130,7 +130,10 @@ def _requested_outputs_complete(
     video_ids = _extract_target_video_ids(request.url)
     existing_upload = None
     if video_ids is not None and len(video_ids) == 1:
-        existing_upload = history.get_existing_upload(next(iter(video_ids)))
+        video_id = next(iter(video_ids))
+        existing_upload = history.get_existing_upload(video_id)
+        if existing_upload is None and not request.upload_short:
+            existing_upload = history.get_duplicate_song_upload(video_id)
     if existing_upload is not None:
         # A model switch may leave no selected work for an already-published
         # request. The durable original uploads remain authoritative.

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from yt_song_to_instrumental.constants import (
     DATA_DIR,
+    HISTORY_SONG_UPLOAD_QUERY,
     SOURCE_MEMBERSHIP_SCHEMA,
     SOURCE_MEMBERSHIP_SAVE_QUERY,
     SOURCE_MEMBERSHIP_LOAD_QUERY,
@@ -22,6 +23,7 @@ from yt_song_to_instrumental.constants import (
     PRIORITY_STATUS_PENDING,
     PRIORITY_STATUS_PROCESSING,
 )
+from yt_song_to_instrumental.song_identity import normalize_song_identity
 
 
 @dataclass
@@ -406,6 +408,25 @@ class HistoryDB:
         """
         row = self._conn.execute(HISTORY_EXISTING_UPLOAD_QUERY, (video_id,)).fetchone()
         return UploadRecord(**dict(row)) if row is not None else None
+
+    def get_duplicate_song_upload(self, video_id: str) -> UploadRecord | None:
+        """Find an earlier full upload under a different source ID.
+
+        Require known artist metadata and preserve all version qualifiers.
+        Never alias source records: Shorts and separation offsets stay source-specific.
+        """
+        track = self.get_download(video_id)
+        if track is None:
+            return None
+        artist = normalize_song_identity(track.artist)
+        title = normalize_song_identity(track.title)
+        if not artist or not title:
+            return None
+        for row in self._conn.execute(HISTORY_SONG_UPLOAD_QUERY, (video_id,)):
+            if (normalize_song_identity(row["artist"]) == artist
+                    and normalize_song_identity(row["title"]) == title):
+                return self.get_existing_upload(row["video_id"])
+        return None
 
     def is_uploaded(self, video_id: str, model: str) -> bool:
         row = self._conn.execute(

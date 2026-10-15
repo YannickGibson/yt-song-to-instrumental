@@ -637,3 +637,13 @@ SHORT_PUBLIC_TITLE_KEY = "title"
 SHORT_PUBLIC_TITLE_ID_KEY = "id"
 SHORT_PUBLIC_TITLE_FALLBACK_LOG = "Metadata API budget unavailable; reading the original public source title"
 SHORT_PUBLIC_TITLE_FAILED_LOG = "Public source title unavailable; keeping Short retryable"
+
+# Conservative song identity: preserve internal punctuation and version labels.
+SONG_IDENTITY_UNICODE_FORM = "NFKC"
+SONG_IDENTITY_EDGE_PUNCTUATION = " .!?,;:…"
+HISTORY_SONG_UPLOAD_QUERY = (
+    "SELECT d.video_id, d.title, d.artist FROM uploads u "
+    "JOIN downloads d ON d.video_id=u.video_id "
+    "WHERE u.youtube_upload_id != '' AND u.video_id != ? "
+    "ORDER BY u.uploaded_at, u.id"
+)
