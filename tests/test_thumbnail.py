@@ -12,7 +12,7 @@ class TestFetchThumbnail:
         with patch("yt_song_to_instrumental.thumbnail.urllib.request.urlretrieve", side_effect=fake_retrieve):
             result = fetch_thumbnail("abc123", tmp_path)
 
-        assert result.exists()
+        assert result.is_file()
         assert "abc123" in result.name
 
     def test_returns_none_on_failure(self, tmp_path):
@@ -56,4 +56,12 @@ class TestGetThumbnailForTrack:
         with patch("yt_song_to_instrumental.thumbnail.urllib.request.urlretrieve", side_effect=fake_retrieve):
             result = get_thumbnail_for_track("abc123", Path(""), tmp_path)
 
-        assert result.exists()
+        assert result.is_file()
+
+    def test_fetches_if_existing_is_directory(self, tmp_path):
+        thumbnail = tmp_path / "fetched.jpg"
+        thumbnail.write_bytes(b"image")
+        with patch("yt_song_to_instrumental.thumbnail.fetch_thumbnail", return_value=thumbnail) as fetch:
+            result = get_thumbnail_for_track("abc123", tmp_path, tmp_path)
+        fetch.assert_called_once_with("abc123", tmp_path)
+        assert result == thumbnail

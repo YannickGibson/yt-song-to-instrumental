@@ -31,6 +31,6 @@ def get_thumbnail_for_track(
     existing_thumbnail: Path,
     tmp_dir: Path,
 ) -> Path | None:
-    if existing_thumbnail and existing_thumbnail.exists() and existing_thumbnail.stat().st_size > 0:
+    if existing_thumbnail and existing_thumbnail.is_file() and existing_thumbnail.stat().st_size > 0:
         return existing_thumbnail
     return fetch_thumbnail(video_id, tmp_dir)
