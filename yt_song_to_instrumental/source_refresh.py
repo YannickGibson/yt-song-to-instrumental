@@ -46,6 +46,7 @@ class SourceCoordinator:
                         if track is not None and (source.after_date is None or not track.release_date
                                                   or track.release_date >= source.after_date):
                             self.history.record_source_membership(video_id, source.url, source.tab)
+                            self.history.resume_source_blocked_short(video_id)
                 except Exception as error:
                     failed.add(source)
                     logger.warning(C.SOURCE_SCAN_FAILED_LOG, source.url, error)

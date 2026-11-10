@@ -117,7 +117,12 @@ RETRYABLE_PIPELINE_FAILURE_STATUSES = (
     "separation_failed", "render_failed", "upload_failed", "no_thumbnail",
 )
 RETRYABLE_PIPELINE_FAILURE_ERROR = "retryable track stages remain incomplete"
+SHORT_SOURCE_BLOCKED = "blocked_source_unavailable"
+SHORT_SOURCE_BLOCKED_LOG = "Short blocked until its original source becomes available: %s"
+SHORT_SOURCE_RESUMED = "source_available"
+SHORT_SOURCE_RESUME_QUERY = "UPDATE uploads SET short_status = ? WHERE video_id = ? AND short_status = ?"
 SHORT_SKIPPED_STATUSES = (
+    SHORT_SOURCE_BLOCKED,
     "skipped_not_music_video",
     "skipped_disabled",
     "withdrawn_non_music_video",

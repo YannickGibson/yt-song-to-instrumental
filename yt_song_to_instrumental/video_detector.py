@@ -39,6 +39,10 @@ _AUDIO_INDICATOR_PATTERN = re.compile(SHORT_REJECT_TITLE_PATTERN, re.IGNORECASE)
 _MUSIC_VIDEO_TITLE_PATTERN = re.compile(SHORT_MUSIC_VIDEO_TITLE_PATTERN, re.IGNORECASE)
 
 
+class SourceVideoUnavailable(RuntimeError):
+    """A successful API response explicitly omits the requested source."""
+
+
 def has_rejected_video_label(title: str) -> bool:
     return bool(_AUDIO_INDICATOR_PATTERN.search(title))
 
@@ -72,11 +76,15 @@ def get_source_video_title(service, video_id: str) -> str | None:
     """Read the unmodified source title; normalized track metadata loses warnings."""
     try:
         response = service.videos().list(part=SHORT_SOURCE_TITLE_PART, id=video_id).execute()
+        if response["items"] == []:
+            raise SourceVideoUnavailable(video_id)
         for item in response["items"]:
             if item["id"] == video_id:
                 title = item["snippet"]["title"]
                 if isinstance(title, str) and title.strip():
                     return title
+    except SourceVideoUnavailable:
+        raise
     except QuotaReserved:
         logger.info(SHORT_PUBLIC_TITLE_FALLBACK_LOG)
         title = get_public_source_title(video_id)

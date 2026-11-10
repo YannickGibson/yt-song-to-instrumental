@@ -6,6 +6,9 @@ from pathlib import Path
 
 from yt_song_to_instrumental.constants import (
     DATA_DIR,
+    SHORT_SOURCE_BLOCKED,
+    SHORT_SOURCE_RESUMED,
+    SHORT_SOURCE_RESUME_QUERY,
     HISTORY_SONG_UPLOAD_QUERY,
     SOURCE_MEMBERSHIP_SCHEMA,
     SOURCE_MEMBERSHIP_SAVE_QUERY,
@@ -497,6 +500,12 @@ class HistoryDB:
                 is_music_video = COALESCE(excluded.is_music_video, uploads.is_music_video)""",
             (video_id, model, status, mv_val),
         )
+        self._conn.commit()
+
+    def resume_source_blocked_short(self, video_id: str) -> None:
+        """Re-admit only source-blocked Shorts when their source reappears."""
+        self._conn.execute(SHORT_SOURCE_RESUME_QUERY,
+                           (SHORT_SOURCE_RESUMED, video_id, SHORT_SOURCE_BLOCKED))
         self._conn.commit()
 
     def is_short_uploaded(self, video_id: str, model: str) -> bool:

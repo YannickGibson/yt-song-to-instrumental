@@ -30,6 +30,8 @@ from yt_song_to_instrumental.constants import (
     SHORT_DURATION_SECONDS,
     SHORT_START_FRACTION,
     SHORT_SOURCE_METADATA_UNAVAILABLE,
+    SHORT_SOURCE_BLOCKED,
+    SHORT_SOURCE_BLOCKED_LOG,
     VIDEO_SOURCE_REJECTED_LOG,
     SHORT_SKIPPED_STATUSES,
     TRACK_STATUS_ALREADY_UPLOADED,
@@ -49,7 +51,7 @@ from yt_song_to_instrumental.thumbnail import get_thumbnail_for_track
 from yt_song_to_instrumental.upload_pacing import UploadDeferred, is_recent_release, wait_for_upload_slot
 from yt_song_to_instrumental.uploader import upload_video
 from yt_song_to_instrumental.upload_recovery import upload_journal
-from yt_song_to_instrumental.video_detector import detect_if_music_video, get_source_video_title
+from yt_song_to_instrumental.video_detector import SourceVideoUnavailable, detect_if_music_video, get_source_video_title
 from yt_song_to_instrumental.video_finder import (
     VideoChannelUnavailable, find_and_verify_music_video, is_trusted_music_video,
 )
@@ -489,7 +491,12 @@ def _perform_short_track(
     if sep_record is not None and not sep_record.quality_passed:
         return
 
-    source_title = get_source_video_title(ctx.service, track.video_id)
+    try:
+        source_title = get_source_video_title(ctx.service, track.video_id)
+    except SourceVideoUnavailable:
+        ctx.history.record_short_status(track.video_id, ctx.model, SHORT_SOURCE_BLOCKED)
+        logger.warning(SHORT_SOURCE_BLOCKED_LOG, track.video_id)
+        return
     if source_title is None:
         ctx.history.record_short_status(track.video_id, ctx.model, SHORT_SOURCE_METADATA_UNAVAILABLE)
         return

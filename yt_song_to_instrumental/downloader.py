@@ -14,6 +14,7 @@ from yt_song_to_instrumental.constants import (
     YTDLP_RETRIES,
 )
 from yt_song_to_instrumental.history import HistoryDB
+from yt_song_to_instrumental.song_identity import normalize_song_identity
 from yt_song_to_instrumental.metadata import strip_title_parentheticals, strip_topic_suffix, version_priority
 from yt_song_to_instrumental.music_metadata import lookup_album_index, lookup_track, lookup_video_date
 
@@ -378,6 +379,16 @@ def download_tracks(
         logger.info("Dropped %d duplicate uploads (audio version preferred)", raw_count - len(entries))
 
     entries = [entry for entry in entries if not history.is_downloaded(entry.get(SOURCE_ENTRY_ID))]
+    uploaded_songs = {
+        (normalize_song_identity(track.artist), normalize_song_identity(track.title))
+        for track in history.get_all_downloads()
+        if track.artist and track.title and history.get_existing_upload(track.video_id) is not None
+    }
+    entries = [entry for entry in entries if not (
+        entry.get("_source_channel") and entry.get("title")
+        and (normalize_song_identity(entry["_source_channel"]),
+             normalize_song_identity(entry["title"])) in uploaded_songs
+    )]
     if not entries:
         return []
 
